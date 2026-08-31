@@ -16,35 +16,23 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
-JUDGE_MODEL = os.environ.get("AUTONOVEL_JUDGE_MODEL", "claude-opus-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
+
+
+
+
 CHAPTERS_DIR = BASE_DIR / "chapters"
 EDIT_LOG_DIR = BASE_DIR / "edit_logs"
 EDIT_LOG_DIR.mkdir(exist_ok=True)
 
 def call_judge(prompt, max_tokens=8000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": JUDGE_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.3,
-        "system": (
-            "You are a ruthless literary editor. You cut fat from prose. "
-            "You have no sentiment about good-enough sentences -- if a sentence "
-            "isn't earning its place, it goes. You quote exactly from the text. "
-            "You never invent or paraphrase. Always respond with valid JSON."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return llm.call_judge(
+        prompt,
+        system="あなたは冷酷な文芸編集者です。あなたは散文から無駄を削ります。良い十分な文に対して感傷はありません——文章が居場所を稼いでいなければ、削除します。あなたは本文から正確に引用します。決して捏造したり言い換えたりしません。必ず有効なJSONで応答してください。",
+        max_tokens=max_tokens,
+        temperature=0.3,
+    )
+
 
 def parse_json(text):
     text = text.strip()
@@ -87,46 +75,44 @@ def parse_json(text):
                     return json.loads(text[start:i+1], strict=False)
         return json.loads(text[start:], strict=False)
 
-EDIT_PROMPT = """You are editing a fantasy novel chapter. Your job: identify exactly
-what to cut or rewrite to make this chapter tighter, sharper, more alive.
+EDIT_PROMPT = """あなたはファンタジー小説の章を編集する編集者です。あなたの仕事は、この章をより引き締め、鋭く、生き生きとさせるために、何を削り、何を書き直すべきかを正確に特定することです。
 
-THE CHAPTER ({word_count} words):
+THE CHAPTER（{word_count}語）:
 {chapter_text}
 
-YOUR TASK:
-1. Find 10-20 specific passages that should be CUT or REWRITTEN.
-   For each, quote the EXACT text (minimum 10 words of the quote so
-   it's unambiguous), explain why it's weak, and classify it.
+YOUR TASK（あなたの仕事）:
+1. 削除または書き直すべき具体的な箇所を10〜20個見つけること。
+   各箇所について、正確なテキストを引用し（曖昧にならないよう引用は10語以上）、
+   なぜ弱いのかを説明し、分類すること。
 
-2. Classify each cut as one of:
-   - FAT: adds nothing, could be removed with no loss
-   - REDUNDANT: restates what a previous sentence/scene already showed
-   - OVER-EXPLAIN: narrator explaining what the scene already demonstrated
-   - GENERIC: could appear in any novel, not specific to this world/character
-   - TELL: names an emotion or state instead of showing it
-   - STRUCTURAL: paragraph/section that disrupts pacing or rhythm
+2. 各削除を以下のいずれかに分類すること：
+   - FAT（脂肪）: 何も加えず、削除しても損失がない
+   - REDUNDANT（冗長）: 前の文/場面がすでに示したことを言い直す
+   - OVER-EXPLAIN（説明過多）: 語り手が場面がすでに実演したことを説明する
+   - GENERIC（凡庸）: どの小説にも現れ得る、この世界・キャラクターに固有でない
+   - TELL（説明）: 感情や状態を「見せる」代わりに「名付ける」
+   - STRUCTURAL（構造的）: ペーシングやリズムを乱す段落・セクション
 
-3. For REWRITE candidates (not cuts), provide a specific revision.
+3. 書き直し候補（削除ではない）については、具体的な修正案を提供すること。
 
-4. Estimate how many words could be cut total without losing anything
-   the chapter needs.
+4. 章が失うことなく削れる総語数を見積もること。
 
-Respond with JSON:
+JSONで応答すること:
 {{
   "cuts": [
     {{
-      "quote": "exact text from the chapter (10+ words)",
+      "quote": "章からの正確なテキスト（10語以上）",
       "type": "FAT|REDUNDANT|OVER-EXPLAIN|GENERIC|TELL|STRUCTURAL",
-      "reason": "why this should go",
+      "reason": "なぜこれを削るべきか",
       "action": "CUT or REWRITE",
-      "rewrite": "replacement text if action is REWRITE, null if CUT"
+      "rewrite": "actionがREWRITEの場合は置換テキスト、CUTならnull"
     }}
   ],
   "total_cuttable_words": N,
-  "tightest_passage": "quote the best 2-3 sentences in the chapter -- the ones you'd never touch",
-  "loosest_passage": "quote the worst 2-3 sentences -- the ones that most need work",
+  "tightest_passage": "章の中で最も良い2〜3文を引用——絶対に触れないもの",
+  "loosest_passage": "最も悪い2〜3文を引用——最も手を入れるべきもの",
   "overall_fat_percentage": N,
-  "one_sentence_verdict": "what this chapter does well and what drags it down, in one sentence"
+  "one_sentence_verdict": "この章がうまくできていることと、何が重くしているかを一文で"
 }}
 """
 

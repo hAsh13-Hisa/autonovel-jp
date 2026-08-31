@@ -23,10 +23,10 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env", override=True)
 
+import llm
+
 # Use Opus for reviews — it's the best at literary analysis
-REVIEW_MODEL = os.environ.get("AUTONOVEL_REVIEW_MODEL", "claude-opus-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+
 
 CHAPTERS_DIR = BASE_DIR / "chapters"
 LOGS_DIR = BASE_DIR / "edit_logs"
@@ -37,27 +37,13 @@ REVIEW_PROMPT = """Read the below novel, "{title}". Review it first as a literar
 
 
 def call_opus(prompt, max_tokens=8000):
-    """Call Opus with the full manuscript."""
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "context-1m-2025-08-07",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": REVIEW_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.3,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    print(f"Sending to {REVIEW_MODEL} ({len(prompt):,} chars)...", file=sys.stderr)
-    resp = httpx.post(
-        f"{API_BASE}/v1/messages",
-        headers=headers, json=payload, timeout=600,
+    """Call the review model with the full manuscript."""
+    print(f"Sending to review model ({len(prompt):,} chars)...", file=sys.stderr)
+    return llm.call_review(
+        prompt,
+        max_tokens=max_tokens,
+        temperature=0.3,
     )
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
 
 
 def get_title():
@@ -278,10 +264,6 @@ def main():
     parser.add_argument("--parse", action="store_true", help="Parse most recent review")
     
     args = parser.parse_args()
-    
-    if not API_KEY:
-        print("ERROR: ANTHROPIC_API_KEY not set in .env", file=sys.stderr)
-        sys.exit(1)
     
     if args.parse:
         cmd_parse(args)

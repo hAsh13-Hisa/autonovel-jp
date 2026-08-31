@@ -11,33 +11,20 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
+
+
+
+
 
 def call_writer(prompt, max_tokens=16000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.7,
-        "system": (
-            "You are a character designer for literary fiction with deep knowledge of "
-            "wound/want/need/lie frameworks, Sanderson's three sliders, and dialogue "
-            "distinctiveness. You create characters who feel like real people with "
-            "contradictions, secrets, and speech patterns you can hear. "
-            "You never use AI slop words. You write in clean, direct prose."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return llm.call_writer(
+        prompt,
+        system="あなたは文芸小説向けのキャラクターデザイナーです。wound/want/need/lie（傷／欲求／必要／嘘）フレームワーク、サンダーソンの三つのスライダー、台詞の個性に深い知識を持っています。あなたは矛盾、秘密、そして聞こえる話し方を持つ、現実の人間のように感じられるキャラクターを作ります。AIスラング語は決して使いません。出力は必ず日本語で書いてください。",
+        max_tokens=max_tokens,
+        temperature=0.7,
+    )
+
 
 seed = (BASE_DIR / "seed.txt").read_text()
 world = (BASE_DIR / "world.md").read_text()
@@ -48,101 +35,104 @@ voice_lines = voice.split('\n')
 part2_start = next(i for i, l in enumerate(voice_lines) if 'Part 2' in l)
 voice_part2 = '\n'.join(voice_lines[part2_start:])
 
-prompt = f"""Build a complete character registry for this fantasy novel. This is CHARACTERS.MD --
-the definitive reference for WHO exists in this story, what drives them, how they speak,
-and what secrets they carry.
+prompt = f"""このファンタジー小説の完全なキャラクター登録簿を作り上げてください。これは CHARACTERS.MD ——
+この物語に誰が存在し、何が彼らを駆り立て、どう話し、どんな秘密を抱えるかの決定的な参照元です。
 
-SEED CONCEPT:
+SEED CONCEPT（種コンセプト）：
 {seed}
 
-WORLD BIBLE (the world these characters inhabit):
+WORLD BIBLE（キャラクターが住む世界）：
 {world}
 
-VOICE IDENTITY (the novel's tone):
+VOICE IDENTITY（この小説の調子）：
 {voice_part2}
 
-CHARACTER CRAFT REQUIREMENTS (from CRAFT.md):
+CHARACTER CRAFT REQUIREMENTS（CRAFT.md から）：
 
-### The Three Sliders (Sanderson)
-Every character has three independent dials (0-10):
-  PROACTIVITY -- Do they drive the plot or react to it?
-  LIKABILITY  -- Does the reader empathize with them?
-  COMPETENCE  -- Are they good at what they do?
-Rule: compelling = HIGH on at least TWO, or HIGH on one with clear growth.
+### 三つのスライダー（サンダーソン）
+各キャラクターは三つの独立したダイヤル（0-10）を持つ：
+  プロアクティビティ（率先性）—— 彼らがプロットを動かすのか、それとも反応するのか？
+  好感度（Likability）—— 読者は彼らに共感するか？
+  能力（Competence）—— 彼らは自分のすることに秀でているか？
+ルール：魅力的 = 少なくとも二つで HIGH、または一つで HIGH かつ明確な成長がある。
 
-### Wound / Want / Need / Lie Framework
-A causal chain:
-  GHOST (backstory event) -> WOUND (ongoing damage) -> LIE (false belief to cope)
-    -> WANT (external goal driven by Lie) -> NEED (internal truth, opposes Lie)
-Rules: Want and Need must be IN TENSION. Lie statable in one sentence.
-  Truth is its direct opposite.
+### Wound / Want / Need / Lie（傷／希望／必要／嘘）フレームワーク
+因果連鎖：
+  GHOST（背景の出来事）-> WOUND（持続する傷）-> LIE（対処のための偽の信念）
+    -> WANT（嘘に駆られた外面的な目標）-> NEED（内的な真実、嘘に対抗）
+ルール：Want と Need は互いに緊張関係にあること。Lie は一文で言えること。
+  Truth はその正反対。
 
-### Dialogue Distinctiveness (8 dimensions)
-1. Vocabulary level  2. Sentence length  3. Contractions/formality
-4. Verbal tics  5. Question vs statement ratio  6. Interruption patterns
-7. Metaphor domain  8. Directness vs indirectness
-Test: Remove dialogue tags. Can you tell who's speaking?
+### 台詞の個別性（8つの次元）
+1. 語彙レベル  2. 文の長さ  3. 縮約／丁寧さ
+4. 口癖  5. 質問対叙述の比率  6. 遮り方のパターン
+7. 比喩の領域  8. 直接性 対 間接性
+テスト：台詞タグを外す。誰が話しているか分かるか？
 
-BUILD THE REGISTRY WITH AT LEAST THESE CHARACTERS:
+少なくとも以下のキャラクターで登録簿を構築すること。SEED CONCEPT の「登場人物」セクションに列挙された主要キャラクターを必ず含め、それぞれに完全な深さを与えること：
 
-1. **Cass Bellwright** (protagonist, POV character)
-   - Full wound/want/need/lie chain
-   - Three sliders with justification
-   - Arc type (positive/negative/flat)
-   - Detailed speech pattern (8 dimensions)
-   - Physical habits and tells
-   - At least 2 secrets
-   - Key relationships mapped
+1. **主人公（POVキャラクター）** — SEED の登場人物から選ぶ
+   - 完全な wound/want/need/lie 連鎖
+   - 正当性付きの三つのスライダー
+   - アークタイプ（正／負／静的）
+   - 詳細な話し方（8次元）
+   - 身体的習慣と癖
+   - 少なくとも2つの秘密
+   - 主要な関係性をマッピング
 
-2. **Eddan Bellwright** (father)
-   - Same depth as Cass
-   - His relationship to the sealed journals, the shaking hands
-   - What he knows and what he's hiding
+2. **もう一人の主要キャラクター（SEED の登場人物から）**
+   - 主人公と同じ深さ
+   - 主人公との関係、彼女／彼が知っていること、隠していること
 
-3. **Perin Bellwright** (brother) 
-   - Even though he's absent for much of the story, he needs full depth
-   - What actually happened with the Corda contract
-   - His presence through absence
+3. **導き手／謎の存在（SEED の登場人物から）**
+   - 物語の中心的な謎を体現する
+   - 彼／彼女の真の目的が徐々に明らかになる
 
-4. **Maret Corda** (antagonist)
-   - Not a villain -- someone whose interests conflicts with Cass's
-   - Her own wound/want/need/lie (she should be understandable)
+4. **敵対者／対立する人物（SEED の登場人物から）**
+   - 悪役ではなく——彼／彼女の利害が主人公と衝突する人物
+   - 彼／彼女自身の傷／望み／必要／嘘（彼／彼女が理解できるものであるべき）
 
-5. **Rector Suvaine** (Academy Chancellor)
-   - The institutional antagonist -- the system personified
-   - She believes she's protecting Cantamura
+5. **恋愛対象／因縁のある人物（SEED の登場人物から）**
+   - 禁断の恋や過去の因縁を担う
+   - テーマ的に何を代表するか
 
-6. **Torvald Hess** (Compact leader)
-   - The outsider perspective on the system
-   - What he represents thematically
+6. **物語がさらに必要とする、少なくとも1〜2人の追加キャラクター**
+   - 主人公の同輩／友人？
+   - 敵対者の側で主人公を知っている誰か？
+   - 割れた忠誠を持つ人物？
 
-7. **At least 1-2 additional characters** that the story needs
-   - A peer/friend for Cass at the Academy?
-   - Someone at the House of Corda who knows Perin?
-   - A Court Singer with divided loyalties?
+各キャラクターに含めること：
+- 名前、年齢、役割
+- 傷／望／必要／裏の連鎖（主要キャラクター用）
+- 三つのスライダー（プロアクティビティ／好感度／能力）を数字と正当性付きで
+- アークタイプとアーク軌道
+- 話し方（全8次元、例文付き）
+- 外見（具体的で、一般的でない）
+- 身体的習慣と無意識の裏
+- 秘密（読者がすぐに知らないもの）
+- 主要な関係性（他のキャラクターにマッピング）
+- テーマ的な役割（このキャラクターはどんな問いを体現するか？）
 
-FOR EACH CHARACTER INCLUDE:
-- Name, age, role
-- Ghost/Wound/Want/Need/Lie chain (for major characters)
-- Three sliders (proactivity/likability/competence) with numbers and justification
-- Arc type and arc trajectory
-- Speech pattern (all 8 dimensions, with example lines)
-- Physical appearance (specific, not generic)
-- Physical habits and unconscious tells
-- Secrets (what the reader doesn't learn immediately)
-- Key relationships (mapped to other characters)
-- Thematic role (what question does this character embody?)
+重要：
+- キャラクターは相互接続すること。彼らの望は互いに衝突するべき。
+- すべての秘密は、もし明かされたら物語を変えるものであるべき。
+- 話し方は、タグなしテストに合格するほど個別でなければならない。
+- 主人公には彼／彼女の特異な才能に由来する習慣を与えること。
+- 敵対者は主人公と同じくらい完全に実現されるべき——手ごたえのある敵対者に。
+- 目標は約3000〜4000語。肉付けではなく密度のあるキャラクター仕事。
 
-IMPORTANT:
-- Characters must INTERCONNECT. Their wants should conflict with each other.
-- Every secret should be something that would CHANGE the story if revealed.
-- Speech patterns must be distinct enough to pass the no-tags test.
-- Give Cass habits that come from his gift (the pain, the constant listening).
-- The father's shaking hands should connect to something specific.
-- Maret Corda should be as fully realized as Cass -- a worthy antagonist.
-- Target ~3000-4000 words. Dense character work, not padding.
+出力はすべて日本語で書いてください。
 """
 
 print("Calling writer model...", file=sys.stderr)
 result = call_writer(prompt)
+# Retry on empty/short output (intermittent empty responses from some models)
+attempt = 1
+while (len(result.strip()) < 500) and attempt < 4:
+    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    result = call_writer(prompt)
+    attempt += 1
+# Write the character registry to characters.md
+characters_path = BASE_DIR / "characters.md"
+characters_path.write_text(result.strip() + "\n")
 print(result)

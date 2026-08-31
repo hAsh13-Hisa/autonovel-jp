@@ -70,17 +70,17 @@ def extract_voice_rules() -> list[str]:
     rules: list[str] = []
 
     # Part 2 identity rules we always want
-    rules.append("Body-first emotion (jaw, ribs, tongue before naming the feeling)")
-    rules.append("No telling after showing")
-    rules.append("No triadic sensory lists")
-    rules.append("70%+ in-scene (dialogue and action, not summary)")
-    rules.append("Dialogue: clipped, subtext-heavy, 'said' default, no adverb tags")
-    rules.append("Sentence rhythm: mixed meter, fragments for pain, long for perception")
-    rules.append("Vocabulary from craft/trade/body wells — no generic fantasy diction")
+    rules.append("身体優先の感情表現（感情の名前を挙げる前に、顎・肋骨・舌）")
+    rules.append("示した後に言わない（show→tell しない）")
+    rules.append("三つ組の感覚リスト禁止")
+    rules.append("70%以上を場面（台詞と行動。要約ではない）")
+    rules.append("台詞：短く、含みを持たせ、デフォルトは「言った」、副詞タグなし")
+    rules.append("文のリズム：混在拍、苦痛には断片、知覚には長文")
+    rules.append("語彙は職人・仕事・身体の領域から——一般的なファンタジー語彙は禁止")
 
     # Part 1 structural slop
-    rules.append("No paragraph-template-machine (vary structure)")
-    rules.append("Max 1-2 em dashes per page")
+    rules.append("段落テンプレート機械禁止（構造を変える）")
+    rules.append("ページあたりダッシュは最大1〜2個")
 
     return rules
 
@@ -254,8 +254,8 @@ def build_panel_brief(ch: int) -> str:
     for m in mentions["momentum_loss"]:
         # Extract actionable suggestion if present
         change_parts.append(
-            f"{change_num}. **Pacing**: Address momentum loss identified by panel — "
-            "tighten or restructure the scenes that drag."
+            f"{change_num}. **ペーシング**: パネルが指摘したモメンタム喪失に対処すること — "
+            "だれる場面を引き締めるか再構成する。"
         )
         change_num += 1
         break  # one entry is enough
@@ -276,15 +276,15 @@ def build_panel_brief(ch: int) -> str:
             # Fall back to the full worst_scene comment, truncated
             raw = m.split("]", 1)[-1].strip() if "]" in m else m
             fix_text = (raw[:300] + "...") if len(raw) > 300 else raw
-        change_parts.append(f"{change_num}. **Dramatize**: {fix_text}")
+        change_parts.append(f"{change_num}. **劇化**: {fix_text}")
         change_num += 1
         break
 
     # From cut_candidate
     for m in mentions["cut_candidate"]:
         change_parts.append(
-            f"{change_num}. **Compress**: Panel identifies this chapter as a cut candidate. "
-            "Fold essential beats into fewer words; eliminate repeated exposition."
+            f"{change_num}. **圧縮**: パネルはこの章を削減候補としている。"
+            "必須のビートをより少ない言葉に畳み込み、繰り返しの説明を排除すること。"
         )
         change_num += 1
         break
@@ -327,16 +327,16 @@ def build_panel_brief(ch: int) -> str:
         target_note = f"~{wc} words (current length, unless changes dictate otherwise)"
 
     # Assemble
-    brief = f"# Revision Brief: Chapter {ch} — {title} ({brief_type})\n\n"
-    brief += "## PROBLEM\n"
+    brief = f"# 改稿ブリーフ: 第{ch}章 — {title} ({brief_type})\n\n"
+    brief += "## 問題点\n"
     brief += "\n\n".join(problem_parts) + "\n\n"
-    brief += "## WHAT TO KEEP\n"
+    brief += "## 保持すべき点\n"
     brief += "\n".join(keep_parts) + "\n\n"
-    brief += "## WHAT TO CHANGE\n"
+    brief += "## 変更すべき点\n"
     brief += "\n".join(change_parts) + "\n\n"
-    brief += "## VOICE RULES\n"
+    brief += "## 声のルール\n"
     brief += "\n".join(f"- {r}" for r in voice_rules) + "\n\n"
-    brief += "## TARGET\n"
+    brief += "## 目標\n"
     brief += target_note + "\n"
 
     return brief
@@ -473,16 +473,16 @@ def build_eval_brief(ch: int) -> str:
 
     target_note = f"~{wc} words (current length: {wc}; adjust based on revision scope)"
 
-    brief = f"# Revision Brief: Chapter {ch} — {title} ({brief_type})\n\n"
-    brief += "## PROBLEM\n"
+    brief = f"# 改稿ブリーフ: 第{ch}章 — {title} ({brief_type})\n\n"
+    brief += "## 問題点\n"
     brief += "\n\n".join(problem_parts) + "\n\n"
-    brief += "## WHAT TO KEEP\n"
+    brief += "## 保持すべき点\n"
     brief += "\n".join(keep_parts) + "\n\n"
-    brief += "## WHAT TO CHANGE\n"
+    brief += "## 変更すべき点\n"
     brief += "\n".join(change_parts) + "\n\n"
-    brief += "## VOICE RULES\n"
+    brief += "## 声のルール\n"
     brief += "\n".join(f"- {r}" for r in voice_rules) + "\n\n"
-    brief += "## TARGET\n"
+    brief += "## 目標\n"
     brief += target_note + "\n"
 
     return brief
@@ -588,16 +588,16 @@ def build_cuts_brief(ch: int) -> str:
         f"Tighten {fat_pct}% fat without losing the chapter's strongest beats."
     )
 
-    brief = f"# Revision Brief: Chapter {ch} — {title} ({brief_type})\n\n"
-    brief += "## PROBLEM\n"
+    brief = f"# 改稿ブリーフ: 第{ch}章 — {title} ({brief_type})\n\n"
+    brief += "## 問題点\n"
     brief += "\n".join(problem_parts) + "\n\n"
-    brief += "## WHAT TO KEEP\n"
+    brief += "## 保持すべき点\n"
     brief += "\n".join(keep_parts) + "\n\n"
-    brief += "## WHAT TO CHANGE\n"
+    brief += "## 変更すべき点\n"
     brief += "\n".join(change_parts) + "\n\n"
-    brief += "## VOICE RULES\n"
+    brief += "## 声のルール\n"
     brief += "\n".join(f"- {r}" for r in voice_rules) + "\n\n"
-    brief += "## TARGET\n"
+    brief += "## 目標\n"
     brief += target_note + "\n"
 
     return brief
@@ -769,16 +769,16 @@ def build_auto_brief() -> tuple[int, str]:
 
     target_note = f"~{wc} words (current: {wc}; adjust based on revision scope)"
 
-    brief = f"# Revision Brief: Chapter {ch} — {title} ({brief_type})\n\n"
-    brief += "## PROBLEM\n"
+    brief = f"# 改稿ブリーフ: 第{ch}章 — {title} ({brief_type})\n\n"
+    brief += "## 問題点\n"
     brief += "\n".join(problem_parts) + "\n\n"
-    brief += "## WHAT TO KEEP\n"
+    brief += "## 保持すべき点\n"
     brief += "\n".join(keep_parts) + "\n\n"
-    brief += "## WHAT TO CHANGE\n"
+    brief += "## 変更すべき点\n"
     brief += "\n".join(change_parts) + "\n\n"
-    brief += "## VOICE RULES\n"
+    brief += "## 声のルール\n"
     brief += "\n".join(f"- {r}" for r in voice_rules) + "\n\n"
-    brief += "## TARGET\n"
+    brief += "## 目標\n"
     brief += target_note + "\n"
 
     return ch, brief

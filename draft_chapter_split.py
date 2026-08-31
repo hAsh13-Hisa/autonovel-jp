@@ -1,0 +1,263 @@
+#!/usr/bin/env python3
+"""
+Length-based split chapter draft (draft_chapter_split.py).
+
+Generates a chapter in ~1200-char chunks. Each chunk is given the FULL
+accumulated text as context (so voice/flow is preserved across the whole
+chapter), and each chunk is gated on dialogue density (>=55%) with retry
+before moving on. Finally the stitched chapter is checked with the same
+min-500-char-window gate (>=55%) used by draft_chapter_single.py.
+
+This addresses the single-call "tail degradation" (prose-heavy stretches)
+by keeping every generation short enough that the model maintains dialogue.
+
+Usage: python draft_chapter_split.py 1
+"""
+import sys, re, statistics
+from pathlib import Path
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).parent
+load_dotenv(BASE_DIR / ".env")
+import llm
+
+CHAPTERS_DIR = BASE_DIR / "chapters"
+
+CHUNK_TARGET = 1200      # target chars per chunk
+CHUNK_MIN = 1000
+CHUNK_MAX = 1500
+DIALOGUE_GATE = 0.55     # per-chunk and final min-window dialogue ratio
+MAX_CHUNK_RETRY = 3
+MAX_CHAPTER_RETRY = 3
+TARGET_CHAPTER = 6000    # target total chapter chars
+
+
+def load_file(path):
+    try:
+        return Path(path).read_text()
+    except FileNotFoundError:
+        return ""
+
+
+def call_writer(prompt, max_tokens=6000):
+    return llm.call_writer(
+        prompt,
+        system="あなたはファンタジー小説の章を執筆する文芸小説家です。三人称限定・過去形で書き、一人のPOVキャラクターに固定します。声の定義に正確に従い、アウトラインのビートをすべて押さえます。禁止語は使わず、感情は「見せる」だけで「言いません」。散文は滑らかで読みやすく、1文に動作・状況・心理をまとめます。文の長さを変えます。読者を信じます。本文は必ず日本語で書いてください。",
+        max_tokens=max_tokens,
+        temperature=0.8,
+    )
+
+
+def _split_sections(text, pattern):
+    lines = text.split("\n")
+    out = []
+    cur_h, cur_b = "", []
+    for line in lines:
+        if re.match(pattern, line):
+            if cur_h or cur_b:
+                out.append((cur_h, "\n".join(cur_b)))
+            cur_h, cur_b = line, []
+        else:
+            cur_b.append(line)
+    if cur_h or cur_b:
+        out.append((cur_h, "\n".join(cur_b)))
+    return out
+
+
+def extract_chapter_outline(text, n):
+    m = re.search(rf'## 第{n}章.*?(?=## 第{n + 1}章|## 前半|## 幕構成|## 伏線台帳|$)', text, re.DOTALL)
+    return m.group(0).strip() if m else "(not found)"
+
+
+def extract_beats(co):
+    b = re.search(r'- \*\*ビート：\*\*(.*?)(?=- |## |\Z)', co, re.DOTALL)
+    if not b:
+        return []
+    return [m.group(1).strip() for m in re.finditer(r'^\s*(\d+)\.\s+(.+)$', b.group(1), re.MULTILINE)]
+
+
+def extract_plants(co):
+    m = re.search(r'- \*\*植え込み：\*\*(.*?)(?=- \*\*回収|- \*\*|## |\Z)', co, re.DOTALL)
+    return m.group(1).strip() if m else "(none)"
+
+
+def prune_sections(text, keywords, max_chars=9000):
+    secs = _split_sections(text, r"^#{2,3}\s")
+    wanted = [h + "\n" + b for h, b in secs if any(k in (h + b) for k in keywords)]
+    res = "\n\n".join(wanted)
+    if res.strip():
+        return res[:max_chars]
+    return text[:max_chars]
+
+
+def character_names(char_text):
+    return [
+        h.replace("##", "").replace("###", "").strip().split("（")[0].split("(")[0]
+        for h, _ in _split_sections(char_text, r"^##\s")
+        if h.strip()
+    ]
+
+
+def dialogue_ratio(text):
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return 0.0
+    return sum(1 for l in lines if "「" in l or "」" in l) / len(lines)
+
+
+def min_window_ratio(text, win=500):
+    body = "\n".join(l for l in text.split("\n") if not l.strip().startswith("#"))
+    ratios = []
+    for i in range(0, len(body), win):
+        seg = body[i:i + win]
+        sl = [l.strip() for l in seg.split("\n") if l.strip()]
+        if not sl:
+            continue
+        ratios.append(sum(1 for l in sl if "「" in l or "」" in l) / len(sl))
+    return min(ratios) if ratios else 0.0
+
+
+def trim_to_sentence(text):
+    """Trim trailing partial sentence so a chunk ends at a natural break."""
+    text = text.rstrip()
+    for m in re.finditer(r"[。」」！？]", text):
+        pass
+    last = max(text.rfind("。"), text.rfind("」"), text.rfind("！"), text.rfind("？"))
+    if last > len(text) * 0.5:
+        return text[:last + 1]
+    return text
+
+
+def main():
+    n = int(sys.argv[1])
+    outline = load_file(BASE_DIR / "outline.md")
+    world = load_file(BASE_DIR / "world.md")
+    chars = load_file(BASE_DIR / "characters.md")
+    canon = load_file(BASE_DIR / "canon.md")
+    voice = load_file(BASE_DIR / "voice.md")
+    exemplar = load_file(BASE_DIR / "style_exemplar.md")
+
+    co = extract_chapter_outline(outline, n)
+    beats = extract_beats(co)
+    plants = extract_plants(co)
+
+    kws = []
+    for nm in character_names(chars):
+        if nm and nm in co:
+            kws.append(nm)
+    for b in beats:
+        for w in re.findall(r'[\u4e00-\u9fff]{2,}', b):
+            if w not in kws:
+                kws.append(w)
+    kws = kws[:40]
+
+    prev_txt = "(第1章・前章なし)"
+    if n > 1:
+        p = CHAPTERS_DIR / f"ch_{n - 1:02d}.md"
+        if p.exists():
+            t = p.read_text()
+            prev_txt = f"(前章の末尾) {t[-2000:]}"
+
+    w = prune_sections(world, kws)
+    c = prune_sections(chars, kws)
+    can = prune_sections(canon, kws, 5000)
+    beat_list = "\n".join(f"{i}. {b}" for i, b in enumerate(beats, 1))
+
+    num_chunks = max(4, round(TARGET_CHAPTER / CHUNK_TARGET))
+
+    def build_chunk_prompt(i, accumulated, is_last):
+        ending = ("このチャンクで章を締めくくること。この章のビートをすべて回収し、章の結末を書くこと。"
+                  if is_last else
+                  "このチャンクは章の途中なので、結末を書かないこと。物語を前進させること。")
+        return f"""この小説の第{n}章の、チャンク{i}/{num_chunks}を書いてください。
+
+【スタイル見本・必ずこの文体で書く】
+{exemplar}
+
+VOICE（声の定義）：
+{voice}
+
+WORLD（関連部分のみ）：
+{w}
+
+CHARACTERS（関連部分のみ）：
+{c}
+
+CANON（確定事実）：
+{can}
+
+この章のアウトライン：
+{co}
+
+この章のビート（必ず全部を物語に織り込む）：
+{beat_list}
+
+植え込み（伏線）：
+{plants}
+
+{prev_txt}
+
+【ここまでに書いた本文（この直後から続ける。既に書いたことを繰り返さない）】
+{accumulated}
+
+執筆指示：
+1. このチャンクの本文だけを書く。約1,200字（1,000〜1,500字）。
+2. 【最重要】ライトノベル。台詞（会話文）がこのチャンクの約70%、地の文が約30%。地の文は少なめ（台詞の間に1〜2文）だが、各文は滑らかで長め（30〜50字）に書く。断片文（2〜5字）を連発しないこと。
+3. 【会話を途切れさせない】このチャンクの冒頭から最後の一文まで、会話を続けること。地の文が3文以上続いたら、必ず台詞を挟むこと。地の文ばかりの長い区間（500字以上）を作らないこと。
+4. 動作・観察・心理も、地の文で説明するのではなく、キャラクターの台詞・問いかけ・独白で語ること。
+5. 既に書いた本文の直後から自然に続けること。既に起きたことを繰り返さない。前のチャンクと同じ台詞・動作・比喩を使わない。
+6. このチャンクの末尾は、自然な文の切れ目（「。」や「」」）で終えること。途中で切らない。
+7. 台詞は問いかけ・相槌・反論・驚きを入れて生き生きと弾ませる。
+8. 台詞は characters の話し方に従う。
+9. 禁止語・AI定型句は使わない。
+10. 文の長さを変え、長文（25〜50字）を主体にする。
+11. {ending}
+12. 「——」で始まるセリフ（台詞冒頭のダッシュ）は、この章全体で1〜2回までにすること。多用しないこと。自然な言い回しで始めること。
+
+今すぐこのチャンクの本文を書いてください。本文は必ず日本語で書いてください。
+"""
+
+    best_full = None
+    best_mw = 0.0
+    for chapter_attempt in range(1, MAX_CHAPTER_RETRY + 1):
+        print(f"章の試行 {chapter_attempt}/{MAX_CHAPTER_RETRY}（{num_chunks}チャンク）...", file=sys.stderr)
+        accumulated = ""
+        chunk_results = []
+        for i in range(1, num_chunks + 1):
+            is_last = (i == num_chunks)
+            prompt = build_chunk_prompt(i, accumulated, is_last)
+            best_chunk = None
+            best_ratio = 0.0
+            for retry in range(1, MAX_CHUNK_RETRY + 1):
+                print(f"  チャンク{i}/{num_chunks} 試行{retry}/{MAX_CHUNK_RETRY}...", file=sys.stderr)
+                result = call_writer(prompt)
+                result = trim_to_sentence(result)
+                ratio = dialogue_ratio(result)
+                if best_chunk is None or len(result) > len(best_chunk):
+                    best_chunk = result
+                    best_ratio = ratio
+                print(f"    セリフ{ratio*100:.0f}% 長さ{len(result)}字 -> {'OK' if ratio >= DIALOGUE_GATE else '再試行'}", file=sys.stderr)
+                if ratio >= DIALOGUE_GATE:
+                    break
+            chunk_results.append(best_chunk)
+            accumulated = "\n".join(chunk_results)
+            print(f"  チャンク{i}確定: セリフ{best_ratio*100:.0f}% 累計{len(accumulated)}字", file=sys.stderr)
+
+        full = "\n".join(chunk_results)
+        mw = min_window_ratio(full)
+        print(f"章の試行{chapter_attempt} 完了: 最小窓{mw*100:.0f}% 総{len(full)}字 -> {'OK' if mw >= DIALOGUE_GATE else '再試行'}", file=sys.stderr)
+        if best_full is None or mw > best_mw:
+            best_full = full
+            best_mw = mw
+        if mw >= DIALOGUE_GATE:
+            break
+
+    out = CHAPTERS_DIR / f"ch_{n:02d}.md"
+    out.write_text(best_full)
+    print(f"Saved {out}", file=sys.stderr)
+    print(f"Chars: {len(best_full)}  MinWindow: {best_mw*100:.0f}%", file=sys.stderr)
+    print(best_full)
+
+
+if __name__ == "__main__":
+    main()

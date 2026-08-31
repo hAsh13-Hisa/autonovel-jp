@@ -11,33 +11,20 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
 
-def call_writer(prompt, max_tokens=16000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "context-1m-2025-08-07",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.8,
-        "system": (
-            "You are rewriting a fantasy novel chapter based on a specific revision brief. "
-            "You follow the brief exactly. You preserve the voice, world, and characters "
-            "from the existing draft while making the structural changes specified. "
-            "You write the FULL chapter. Do not truncate or summarize."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=600)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+
+
+
+
+def call_revision(prompt, max_tokens=16000):
+    return llm.call_revision(
+        prompt,
+        system='あなたは特定の改稿ブリーフに基づいてファンタジー小説の章を書き直す作家です。ブリーフに正確に従います。声、世界、キャラクターを保ちながら、指定された構造変更を行います。章の全文を書きます。本文は必ず日本語で書いてください。重要な指示：思考プロセス、メタコメント、計画、英語の注記、推敲メモは一切出力しないでください。出力は改稿後の章の本文のみにしてください。',
+        max_tokens=max_tokens,
+        temperature=0.8,
+    )
+
 
 def main():
     ch_num = int(sys.argv[1])
@@ -48,6 +35,15 @@ def main():
     world = (BASE_DIR / "world.md").read_text()
     brief = Path(brief_file).read_text()
     
+    # Prune context to only what this revision needs (prevents 40KB+ prompt
+    # that triggers empty responses on long-prose models). Reuse the beat
+    # script's pruning helpers.
+    import draft_chapter_beat as dcb
+    keywords = dcb.extract_keywords(brief, brief)
+    pruned_characters = dcb.extract_character_sections(characters, keywords)
+    pruned_world = dcb.extract_doc_sections(world, keywords)
+    pruned_canon = dcb.extract_doc_sections((BASE_DIR / "canon.md").read_text(), keywords)
+    
     # Load adjacent chapters for continuity
     prev_path = BASE_DIR / "chapters" / f"ch_{ch_num - 1:02d}.md"
     next_path = BASE_DIR / "chapters" / f"ch_{ch_num + 1:02d}.md"
@@ -56,47 +52,50 @@ def main():
     
     # Load old version if exists
     old_path = BASE_DIR / "chapters" / f"ch_{ch_num:02d}.md"
-    old_text = old_path.read_text() if old_path.exists() else "(no existing draft)"
+    old_text = old_path.read_text() if old_path.exists() and old_path.stat().st_size > 0 else "(no existing draft)"
     
-    prompt = f"""Rewrite Chapter {ch_num} of "The Second Son of the House of Bells."
+    prompt = f"""「ベルズの家の次男」第{ch_num}章を書き直してください。
 
-REVISION BRIEF (follow this exactly):
+REVISION BRIEF（改稿ブリーフ。これに正確に従うこと）：
 {brief}
 
-VOICE DEFINITION:
+VOICE DEFINITION（声の定義）：
 {voice}
 
-CHARACTER REGISTRY:
-{characters}
+CHARACTER REGISTRY（キャラクター登録簿。この改稿に関連する部分のみ）：
+{pruned_characters}
 
-WORLD BIBLE:
-{world}
+WORLD BIBLE（世界バイブル。この改稿に関連する部分のみ）：
+{pruned_world}
 
-PREVIOUS CHAPTER ENDING (maintain continuity):
+CANON（確定済みの設定事実。この改稿に関連する部分のみ）：
+{pruned_canon}
+
+PREVIOUS CHAPTER ENDING（連続性を保つこと）：
 {prev_tail}
 
-NEXT CHAPTER OPENING (end so this flows into it):
+NEXT CHAPTER OPENING（これに流れ込むように終わらせること）：
 {next_head}
 
-THE EXISTING DRAFT (use as raw material -- keep what works, cut what doesn't):
+THE EXISTING DRAFT（既存の草稿。生の材料として使うこと——うまくいっているものを残し、うまくいかないものを切る）：
 {old_text}
 
-ANTI-PATTERN RULES:
-- NO triadic sensory lists (X. Y. Z.)
-- NO "He did not [verb]" more than once
-- NO "He thought about [X]" constructions
-- NO "the way [X] did [Y]" more than twice
-- NO "not X, but Y" formula in narration
-- NO over-explaining after showing
-- MAX 2 section breaks
-- At least one moment that genuinely surprises
-- 70%+ in-scene (dialogue and action, not summary)
-- Dialogue should sound like speech, not prose
+ANTI-PATTERN RULES（反パターン規則）：
+- 三つ組の感覚リスト禁止（X。Y。Z。）
+- 「彼は[動詞]しなかった」は1回まで
+- 「彼は[X]について考えた」構文禁止
+- 比喩の接続詞として「[X]が[Y]するように」は2回まで
+- 叙述で「Xではなく、Y」の公式禁止
+- 示した後に説明しすぎるのを禁止
+- 区切りは最大2回
+- 本当に驚く瞬間を少なくとも1つ
+- 70%以上を場面（台詞と行動。要約ではない）
+- 台詞は話し言葉に聞こえるべき。散文ではないこと
 
-Write the FULL revised chapter now."""
+改稿後の章の全文を今すぐ書いてください。本文は必ず日本語で書いてください。"""
 
     print(f"Rewriting Chapter {ch_num}...", file=sys.stderr)
-    result = call_writer(prompt)
+    result = call_revision(prompt)
     
     out_path = BASE_DIR / "chapters" / f"ch_{ch_num:02d}.md"
     out_path.write_text(result)

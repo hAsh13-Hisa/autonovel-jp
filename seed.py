@@ -18,100 +18,71 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6-20250217")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE_URL = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
+
+
+
+
 ANTHROPIC_BETA = "context-1m-2025-08-07"
 
 
 def call_writer(prompt, max_tokens=4000):
-    import httpx
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": ANTHROPIC_BETA,
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 1.0,  # high temp for creative diversity
-        "system": (
-            "You are a fantasy novelist with deep knowledge of the genre's "
-            "best works -- Tolkien, Le Guin, Rothfuss, Wolfe, Jemisin, Peake, "
-            "Susanna Clarke, Andrew Peterson, Sofia Samatar. You generate "
-            "novel concepts that are SPECIFIC, SURPRISING, and STRUCTURALLY "
-            "SOUND. You never propose generic medieval Europe + elves. Each "
-            "concept should make a reader think 'I've never seen THAT before.'"
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(
-        f"{API_BASE_URL}/v1/messages",
-        headers=headers,
-        json=payload,
-        timeout=120,
+    return llm.call_writer(
+        prompt,
+        system="あなたはファンタジー小説家です。このジャンルの最高傑作群——トールキン、ル＝グウィン、ロスフス、ウルフ、ジェミシン、ピーク、スザンナ・クラーク、アンドリュー・ピーターソン、ソフィア・サマター——を深く知っています。あなたはSPECIFIC（具体的）、SURPRISING（驚き）、STRUCTURALLY SOUND（構造的に堅牢）な小説コンセプトを生み出します。中世ヨーロッパ＋エルフのような凡庸な設定は決して出しません。出力は必ず日本語で書いてください。",
+        max_tokens=max_tokens,
+        temperature=1.0,
     )
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
 
 
-GENERATE_PROMPT = """Generate {count} fantasy novel seed concepts. Each should be
-a complete premise you could build a novel from.
 
-For EACH concept, provide:
+GENERATE_PROMPT = """{count} 個のファンタジー小説の種コンセプトを生成してください。それぞれが、
+そのまま小説一冊を組み立てられる完全な前提になっている必要があります。
 
-NUMBER. TITLE (a working title, evocative, not generic)
-HOOK: One sentence that would make someone pick up the book. Specific
-  and surprising, not "In a world where..."
-WORLD: What makes this world different? Not just "there's magic" but
-  what specific, unusual thing defines this place? Be concrete --
-  salt flats, inverted towers, cities that migrate, a sea that
-  remembers, whatever. Make it SENSORY.
-MAGIC/COST: What is the core speculative element and what does it
-  COST? Per Sanderson's Second Law, limitations > powers. The cost
-  should create interesting dilemmas.
-TENSION: What's the central conflict? It must be both PERSONAL (one
-  character's specific problem) and COSMIC (affects the world).
-  These two must be in tension with each other.
-THEME: What question does this story explore? Not a message -- a
-  genuine question with no easy answer.
-WHY IT'S NOT GENERIC: One sentence on what makes this different from
-  standard fantasy fare.
+各コンセプトで提供すること：
 
-Aim for DIVERSITY across the {count} concepts:
-  - At least one with a non-human-centric world
-  - At least one that's more literary/quiet than epic
-  - At least one with an unusual narrative structure idea
-  - At least one set outside the typical European-inspired setting
-  - Mix of tones: dark, warm, weird, melancholy, whimsical
+番号. タイトル（仮題。喚起的で、凡庸ではない）
+HOOK: 本を手に取らせる一言。具体的で驚きがあり、「世界のどこかで…」のような文にしてはいけない。
+WORLD: この世界の何が異なるのか？「魔法がある」だけではなく、この場所を定義する具体的で珍しい点は何か？具体化する——塩の平原、逆さに建つ塔、移動する都市、記憶する海など。SENSORY（感覚的）に。
+MAGIC/COST: 中核となる思弁的要素と、それが代償（COST）するものは何か？サンダーソンの第二法則に従い、力よりも制限が重要。代償は興味深いジレンマを生むべき。
+TENSION: 中心的な対立は何か？PERSONAL（一人のキャラクターの固有の問題）であると同時に COSMIC（世界に影響する）でなければならない。この二つが互いに緊張関係にあること。
+THEME: この物語が探求する問いは何か。メッセージではなく、簡単に答えの出ない本物の問い。
+WHY IT'S NOT GENERIC: 標準的なファンタジーの定番と何が違うかを一文で。
 
-DO NOT generate:
-  - Chosen one prophecies (unless subverted in an interesting way)
-  - Dark lord / ultimate evil as the main antagonist
-  - Medieval Europe + elves/dwarves/orcs
-  - "Academy" or "school for magic" settings
-  - Love triangles as the central plot
+{count} 個のコンセプト全体で DIVERSITY（多様性）を狙う：
+  - 少なくとも1つは非人間中心の世界であること
+  - 少なくとも1つは叙事詩的というより文芸的／静かなものであること
+  - 少なくとも1つは変わった叙述構造のアイデアを持つこと
+  - 少なくとも1つは典型的なヨーロッパ風設定の外に置くこと
+  - トーンを混ぜる：ダーク、暖かい、奇妙、メランコリック、浮遊感
+
+生成しないこと：
+  - 選ばれし者の預言（面白い形で覆さない限り）
+  - 主な敵役としての魔王／究極の悪
+  - 中世ヨーロッパ＋エルフ／ドワーフ／オーク
+  - 「アカデミー」「魔法学校」の設定
+  - 中心プロットとしての三角関係
+
+出力はすべて日本語で書いてください。
 """
 
-RIFF_PROMPT = """I have a seed idea for a fantasy novel:
+RIFF_PROMPT = """私にはファンタジー小説の種アイデアがある：
 
 "{idea}"
 
-Generate 5 variations on this concept. Keep what's interesting about
-the core idea but push it in different directions. For each variation:
+このコンセプトを5パターン展開してください。核となる面白さを保ちつつ、別の方向へ押し出してください。各パターンに：
 
-NUMBER. TITLE
-HOOK: One sentence.
-HOW IT DIFFERS: What did you change from the original seed and why?
-WORLD: Concrete, sensory world details.
-MAGIC/COST: The speculative element and its cost.
-TENSION: Personal + cosmic conflict.
-THEME: The question it explores.
+番号. TITLE
+HOOK: 一言。
+HOW IT DIFFERS: 元の種から何を変えたか、そしてなぜか。
+WORLD: 具体的で感覚的な世界の詳細。
+MAGIC/COST: 思弁的要素とその代償。
+TENSION: 個人的＋宇宙的な対立。
+THEME: 探求する問い。
 
-Make the variations genuinely different from each other -- don't just
-tweak surface details. Change the protagonist, the setting, the tone,
-the structure, the thematic focus.
+各パターンを互いに本当に違うものにすること——表面上の細部をいじるだけにしない。主人公、舞台、トーン、構造、テーマの焦点を変えること。
+
+出力する全文は日本語で書いてください。
 """
 
 
@@ -122,10 +93,6 @@ def main():
     parser.add_argument("--riff", type=str, default=None,
                         help="Riff on an existing idea")
     args = parser.parse_args()
-
-    if not ANTHROPIC_API_KEY:
-        print("ERROR: Set ANTHROPIC_API_KEY in .env first")
-        sys.exit(1)
 
     if args.riff:
         print(f"Riffing on: {args.riff}\n")

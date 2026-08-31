@@ -149,6 +149,11 @@ def main():
     
     # Compute novel-wide averages
     all_vals = list(results.values())
+    if not all_vals:
+        print("VOICE FINGERPRINT")
+        print("=" * 70)
+        print("No chapters found — skipping voice fingerprint (foundation phase).")
+        return
     avg = {}
     for key in all_vals[0]:
         vals = [r[key] for r in all_vals]

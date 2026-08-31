@@ -10,42 +10,30 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
+
+
+
+
 
 def call_writer(prompt, max_tokens=16000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.2,  # Low temp for factual extraction
-        "system": (
-            "You are a continuity editor extracting hard facts from fantasy novel "
-            "planning documents. You are precise, exhaustive, and never invent facts "
-            "that aren't in the source material. Every entry must be traceable to a "
-            "specific statement in the source documents."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return llm.call_writer(
+        prompt,
+        system="あなたはファンタジー小説の企画文書から確定事実を抽出するコンティニュイティ編集者です。あなたは正確で網羅的であり、原文にない事実を決して捏造しません。出力は必ず日本語で書いてください。",
+        max_tokens=max_tokens,
+        temperature=0.2,
+    )
+
 
 world = (BASE_DIR / "world.md").read_text()
 characters = (BASE_DIR / "characters.md").read_text()
 seed = (BASE_DIR / "seed.txt").read_text()
 
-prompt = f"""Extract EVERY hard fact from these planning documents into a structured canon database.
-A "hard fact" is anything a writer must not contradict: names, ages, dates, physical descriptions,
-rules of the magic system, geography, relationships, established events.
+prompt = f"""これらの計画文書から、EVERY hard fact（すべての確定事実）を構造化された正典データベースに抽出してください。
+「hard fact（確定事実）」とは、書き手が矛盾させてはならないもの：名前、年齢、日付、身体的特徴、
+魔法システムのルール、地理、関係性、確定した出来事。
 
-SOURCE DOCUMENTS:
+SOURCE DOCUMENTS（出典文書）：
 
 === SEED.TXT ===
 {seed}
@@ -56,40 +44,51 @@ SOURCE DOCUMENTS:
 === CHARACTERS.MD ===
 {characters}
 
-FORMAT THE OUTPUT AS CANON.MD with these categories:
+出力を CANON.MD として、以下のカテゴリで整形すること：
 
-## Geography
-- Specific facts about locations, distances, physical properties
+## 地理
+- 場所、距離、物理的特性についての具体的な事実
 
-## Timeline
-- Dated events, ages, durations
+## タイムライン
+- 日付付きの出来事、年齢、期間
 
-## Magic System Rules
-- Hard rules of Tonal Law (intervals, costs, limitations)
-- Cass's gift specifics
+## 魔法システムのルール
+- この世界の魔法体系のハードルール（間隔、代償、制限）
+- 主人公の特異な才能の詳細
 
-## Character Facts
-- Ages, physical descriptions, habits, relationships
-- One entry per fact (not paragraphs)
+## キャラクターの事実
+- 年齢、身体的特徴、癖、人間関係
+- 事実ごとに1エントリ（段落にしない）
 
-## Political / Factional
-- Who controls what, alliances, conflicts, contracts
+## 政治的／派閥的
+- 誰が何を支配しているか、同盟、衝突、契約
 
-## Cultural
-- Customs, taboos, laws, festivals, food, clothing
+## 文化的
+- 風習、禁忌、法律、祭り、食べ物、服装
 
-## Established In-Story
-- Events that have already happened in the story's past
-- The Perin contract, the Expansion Wars, etc.
+## 物語内で確定済み
+- 物語の過去にすでに起こった出来事
+- 主要な契約、戦争、転換点など
 
-RULES:
-- One fact per bullet point. Short. Specific. Checkable.
-- Include the source (world.md or characters.md) in parentheses after each fact.
-- Aim for 80-120 entries minimum. Be exhaustive.
-- If two documents give slightly different details, note the discrepancy.
-- DO NOT invent facts. Only record what's explicitly stated.
+RULES（ルール）：
+- 各箇条に事実を1つだけ。短く。具体的に。検証可能に。
+- 各事実の後に出典（world.md か characters.md）を括弧書きで含める。
+- 最低80〜120エントリを目指す。徹底的に。
+- 二つの文書がわずかに異なる詳細を与えている場合、その不一致を記すこと。
+- 事実を捏造しないこと。明示的に書かれているものだけを記録すること。
+
+出力はすべて日本語で書いてください。
 """
 
 print("Calling writer model...", file=sys.stderr)
 result = call_writer(prompt)
+# Retry on empty/short output (intermittent empty responses from some models)
+attempt = 1
+while (len(result.strip()) < 500) and attempt < 4:
+    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    result = call_writer(prompt)
+    attempt += 1
+# Write the canon database to canon.md
+canon_path = BASE_DIR / "canon.md"
+canon_path.write_text(result.strip() + "\n")
 print(result)

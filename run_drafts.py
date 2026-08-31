@@ -71,8 +71,8 @@ for ch in chapters:
     
     results.append((ch, words, slop['slop_penalty'], score))
     
-    # Git commit
-    run(f"cd /home/jeffq/autonovel && git add chapters/ch_{ch:02d}.md state.json")
+    # Git commit (script assumes CWD = repo root, like the other file access above)
+    run(f"git add chapters/ch_{ch:02d}.md state.json")
     
     # Update state.json
     with open("state.json") as f:

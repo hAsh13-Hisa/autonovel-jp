@@ -29,14 +29,10 @@ BASE_DIR = Path(__file__).parent
 from dotenv import load_dotenv
 load_dotenv(BASE_DIR / ".env")
 
-# Judge uses Opus 4.6 (harsh, critical). Writer uses Sonnet 4.6 (fast, long context).
-# Intentionally different to avoid self-congratulation.
-JUDGE_MODEL = os.environ.get("AUTONOVEL_JUDGE_MODEL", "claude-opus-4-6")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE_URL = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
 
-# Beta header to unlock 1M context window on both Opus 4.6 and Sonnet 4.6
-ANTHROPIC_BETA = "context-1m-2025-08-07"
+# Judge/review models are configured per-role in .env (see llm.py).
+# Use a different model than the writer to avoid self-congratulation.
 CHAPTERS_DIR = BASE_DIR / "chapters"
 EVAL_LOG_DIR = BASE_DIR / "eval_logs"
 EVAL_LOG_DIR.mkdir(exist_ok=True)
@@ -51,12 +47,26 @@ TIER1_BANNED = [
     "catalyst", "juxtapose", "myriad", "plethora",
 ]
 
+# Japanese prose AI tells (over-polished / machine-familiar phrasing)
+TIER1_JA_BANNED = [
+    "多面的", "シナジー", "網羅", "深掘り", "テーゼ", "ケーススタディ",
+    "肝要", "踏まえる", "俯瞰", "全体像を掴む", "幅広い視点", "多角的",
+]
+
 TIER2_SUSPICIOUS = [
     "robust", "comprehensive", "seamless", "seamlessly", "cutting-edge",
     "innovative", "streamline", "empower", "foster", "enhance", "elevate",
     "optimize", "pivotal", "intricate", "profound", "resonate",
     "underscore", "harness", "cultivate", "bolster", "galvanize",
     "cornerstone", "game-changer", "scalable",
+]
+
+# Japanese filler / essay-like connective phrasing that reads as AI-adjacent
+# in prose (kept light; these penalize more when clustered than alone)
+TIER2_JA_SUSPICIOUS = [
+    "まず", "つまり", "しかしながら", "一方で", "例えば", "いわば",
+    "というわけで", "そのため", "結果的に", "要するに", "端的に言えば",
+    "言わば", "すなわち", "本質的には",
 ]
 
 TIER3_FILLER = [
@@ -84,23 +94,55 @@ TRANSITION_OPENERS = [
     "nevertheless", "consequently", "nonetheless", "similarly",
 ]
 
-# Fiction-specific AI tells (prose clichés that betray machine origin)
-FICTION_AI_TELLS = [
-    r"a sense of \w+",
-    r"couldn'?t help but feel",
-    r"the weight of \w+",
-    r"the air was thick with",
-    r"eyes widened",
-    r"a wave of \w+ washed over",
-    r"a pang of \w+",
-    r"heart pounded in (?:his|her|their) chest",
-    r"(?:raven|dark|golden|silver) (?:hair|tresses) (?:spilled|cascaded|tumbled|fell)",
-    r"piercing (?:blue|green|gray|grey|dark) eyes",
-    r"a knowing (?:smile|grin|look|glance)",
-    r"(?:he|she|they) felt a (?:surge|rush|wave|pang|flicker) of",
-    r"the silence (?:was|hung|stretched|grew) (?:heavy|thick|oppressive|deafening)",
-    r"let out a breath (?:he|she|they) didn'?t (?:know|realize)",
-    r"something (?:dark|ancient|primal|unnamed) stirred",
+# Show-don't-tell detectors: emotion TELLING patterns
+TELLING_PATTERNS = [
+    r"\b(?:he|she|they|I|we|[A-Z]\w+) (?:felt|was|seemed|looked|appeared) (?:angry|sad|happy|scared|nervous|excited|jealous|guilty|anxious|lonely|desperate|furious|terrified|elated|miserable|hopeful|confused|relieved|horrified|disgusted|ashamed|proud|bitter|defeated|triumphant)\b",
+    r"\b(?:angrily|sadly|happily|nervously|excitedly|desperately|furiously|anxiously|guiltily|bitterly|wearily|miserably)\b",
+    # Japanese show-don't-tell: naming the emotion instead of showing it
+    r"(?:彼|彼女|自分|私|僕|あなた|アイツ|老人|男|女|子供)[はが]\s*(?:怒っ|悲し|嬉し|怖が|緊張し|焦っ|興奮し|嫉妬し|罪悪感|不安|寂し|絶望|幸せ|混乱|安心|恐怖|嫌悪|恥ずかし|誇り|苦し|敗北|勝ち誇)",
+    r"(?:怒り|悲しみ|恐怖|不安|緊張|焦り|嫉妬|幸福感|絶望感|疎外感|孤独感|喜び|苦しみ)が(?:\w{1,6}?)[。、\n]",
+]
+
+# Japanese fiction AI tells -- concrete, sensory clichés that recur in
+# machine prose (over-used "reaction" beats and stock simile scaffolds).
+FICTION_AI_TELLS_JA = [
+    r"目を(?:見開|見張|開け)[いこだ]",
+    r"目が(?:見開|開い)",
+    r"息を(?:呑|飲み|の|呑み込み)",
+    r"息が(?:詰ま|止ま|乱れ)",
+    r"心臓が(?:高鳴|ドキドキ|バクバク)",
+    r"心が(?:揺れ|締め付|張り裂け)",
+    r"胸が(?:締め付|苦しく|切な|痛)",
+    r"唇を(?:噛み|引き結び|震わせ)",
+    r"拳を(?:握り締め|握りしめ)",
+    r"視線を(?:そらし|逸らし|落とし)",
+    r"ふと(?:思う|感じ|思い出す)",
+    r"何かを(?:感じ|悟り|察し)",
+    r"今までにない(?:感覚|感情)",
+    r"言葉にできない(?:感覚|思い|感情)",
+    r"心の奥(?:から|深く|で)",
+    r"ざわめく(?:胸|心|何か)",
+    r"全身に(?:走り|広が|響い)",
+    r"背筋が(?:凍り|寒け|震え)",
+    r"鳥肌が(?:立ち|立っ)",
+    r"時が止まった(?:よう|みたい)",
+    r"(?:氷|冷たい)ような(?:空気|視線|沈黙)",
+    r"冷たい(?:風が|空気が|視線が)",
+    r"何かが(?:間違い|おかしい|異変)",
+    r"(?:目に見える|目に見えぬ)ほど",
+    r"淡い(?:光|月明かり|色)",
+    r"微かな(?:声|音|震え|香り)",
+    r"静かな(?:夜|空間|時間|安らぎ)",
+    r"不思議な(?:力|感覚|安心感|力)",
+    r"信じられない(?:思い|思い込み)",
+    r"鼓動が(?:早まり|速くなり|高鳴り)",
+    r"涙が(?:溢れ|こぼれ|滲み)",
+    r"(?:心|魂|記憶)が(?:揺さぶら|震え)",
+    r"沈黙が(?:広が|流れ|支配)",
+    r"耳に(?:こもる|入り込む|届く)",
+    r"身体(?:が|の)(?:震え|こわば|硬直)",
+    r"一瞬(?:のこと|目を)(?:だった|過ぎ)",
+    r"それまで(?:と|も)",
 ]
 
 # Structural AI tics -- rhetorical formulas that betray AI composition
@@ -111,12 +153,12 @@ STRUCTURAL_AI_TICS = [
     r"[Tt]hose are (?:different|not the same) things\.",  # formula capper
     r"[Nn]ot (?:just|merely|simply) .{3,40}, but ",  # "not just X, but Y"
     r"[Nn]ot (?:from|by|because of) .{3,40}, but (?:from|by|because)",  # "not from X, but from Y" in narration
-]
-
-# Show-don't-tell detectors: emotion TELLING patterns
-TELLING_PATTERNS = [
-    r"\b(?:he|she|they|I|we|[A-Z]\w+) (?:felt|was|seemed|looked|appeared) (?:angry|sad|happy|scared|nervous|excited|jealous|guilty|anxious|lonely|desperate|furious|terrified|elated|miserable|hopeful|confused|relieved|horrified|disgusted|ashamed|proud|bitter|defeated|triumphant)\b",
-    r"\b(?:angrily|sadly|happily|nervously|excitedly|desperately|furiously|anxiously|guiltily|bitterly|wearily|miserably)\b",
+    # Japanese rhetorical formulas
+    r"(?:ではない|じゃない)[、。](?:むしろ|そうではなく)",
+    r"(?:つまり|いわば|すなわち)、",
+    r"(?:もちろん|勿論)、[^。]{3,40}[、。](?:だが|しかし)、",
+    r"(?:それは|その)(?:違い|違いは|区別)",
+    r"(?:「[^」]{1,12}」{0,1})と(?:は|いう).{0,10}(?:、?それは)",
 ]
 
 
@@ -140,6 +182,11 @@ def slop_score(text):
         c = sum(1 for token in words if token.strip(".,;:!?\"'()") == w)
         if c > 0:
             tier1_hits.append((w, c))
+    # Tier 1 (Japanese -- substring match, no word boundaries in JP text)
+    for w in TIER1_JA_BANNED:
+        c = text.count(w)
+        if c > 0:
+            tier1_hits.append((w, c))
 
     # Tier 2 -- count per paragraph, flag clusters
     paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
@@ -149,9 +196,14 @@ def slop_score(text):
         c = sum(1 for token in words if token.strip(".,;:!?\"'()") == w)
         if c > 0:
             tier2_hits.append((w, c))
+    for w in TIER2_JA_SUSPICIOUS:
+        c = text.count(w)
+        if c > 0:
+            tier2_hits.append((w, c))
     for para in paragraphs:
         para_lower = para.lower()
         hits_in_para = sum(1 for w in TIER2_SUSPICIOUS if w in para_lower)
+        hits_in_para += sum(1 for w in TIER2_JA_SUSPICIOUS if w in para)
         if hits_in_para >= 3:
             tier2_cluster_count += 1
 
@@ -167,10 +219,13 @@ def slop_score(text):
     em_dash_density = (em_dashes / word_count) * 1000
 
     # Sentence length variation (coefficient of variation)
-    sentences = re.split(r'[.!?]+', text)
-    sentences = [s.strip() for s in sentences if len(s.strip().split()) > 2]
+    # Split on Western and Japanese sentence-ending punctuation.
+    sentences = re.split(r'[.!?。！？…]+', text)
+    sentences = [s.strip() for s in sentences if len(s.strip()) > 4]
     if len(sentences) > 2:
-        lengths = [len(s.split()) for s in sentences]
+        # Use character length (works for both English and Japanese, which
+        # has no whitespace word boundaries).
+        lengths = [len(s) for s in sentences]
         mean_len = sum(lengths) / len(lengths)
         variance = sum((l - mean_len) ** 2 for l in lengths) / len(lengths)
         std_len = variance ** 0.5
@@ -186,10 +241,53 @@ def slop_score(text):
             transition_starts += 1
     transition_ratio = transition_starts / len(paragraphs) if paragraphs else 0
 
-    # Fiction AI tells
+    # Japanese monotone short-fragment chains.
+    # An AI tell: many paragraphs where text is broken into MANY short
+    # fragments by 読点 (、) and 句点 (。), producing a mechanical staccato
+    # rhythm with no contrast. This differs from DELIBERATE short-sentence
+    # emphasis (e.g. at an emotional peak per the 過去作 style guide),
+    # which is localized to 1-2 paragraphs.
+    # We detect: >= MONOTONE_THRESHOLD consecutive prose paragraphs that
+    # each consist of >= MONOTONE_MIN_FRAG fragments where the MAJORITY
+    # of fragments are short (<= MONOTONE_MAX_FRAG_LEN chars).
+    MONOTONE_THRESHOLD = 3          # consecutive paragraphs to count as a chain
+    MONOTONE_MAX_FRAG_LEN = 12      # a "short" fragment is <= 12 chars
+    MONOTONE_MIN_FRAG = 5           # a paragraph needs >= 5 fragments to check
+    MONOTONE_SHORT_RATIO = 0.85     # >=85% of fragments must be short
+
+    def _is_monotone_para(para: str) -> bool:
+        frags = [f.strip() for f in re.split(r'[。！？、]', para) if len(f.strip()) > 1]
+        if len(frags) < MONOTONE_MIN_FRAG:
+            return False
+        short = sum(1 for f in frags if len(f) <= MONOTONE_MAX_FRAG_LEN)
+        return (short / len(frags)) >= MONOTONE_SHORT_RATIO
+
+    monotone_chain_len = 0
+    monotone_chain_count = 0
+    monotone_chains_hits = []       # store chain lengths
+    for para in paragraphs:
+        # Skip headings / list lines / fences / empty
+        stripped = para.strip()
+        if (not stripped or stripped.startswith(('#', '-', '*', '|', '```'))
+                or re.match(r'^\d+[\.\)]', stripped)):
+            monotone_chain_len = 0
+            continue
+        if _is_monotone_para(para):
+            monotone_chain_len += 1
+        else:
+            if monotone_chain_len >= MONOTONE_THRESHOLD:
+                monotone_chain_count += 1
+                monotone_chains_hits.append(monotone_chain_len)
+            monotone_chain_len = 0
+    if monotone_chain_len >= MONOTONE_THRESHOLD:
+        monotone_chain_count += 1
+        monotone_chains_hits.append(monotone_chain_len)
+    monotone_chain_total_paras = sum(monotone_chains_hits)
+
+    # Fiction AI tells (English + Japanese)
     fiction_tells = []
-    for pattern in FICTION_AI_TELLS:
-        matches = re.findall(pattern, text, re.IGNORECASE)
+    for pattern in FICTION_AI_TELLS_JA:
+        matches = re.findall(pattern, text)
         if matches:
             fiction_tells.append((pattern[:40], len(matches)))
     fiction_tell_count = sum(c for _, c in fiction_tells)
@@ -218,6 +316,12 @@ def slop_score(text):
         penalty += 1.0  # uniform sentence length: 1 pt
     if transition_ratio > 0.3:
         penalty += min(transition_ratio * 2, 1.0)  # transition abuse: up to 1 pt
+    # Monotone short-sentence chains: mechanical staccato rhythm.
+    # Penalize chain COUNT and total chained paragraphs (up to 2.5 pts).
+    if monotone_chain_count > 0:
+        chain_penalty = min(monotone_chain_count * 1.0, 1.5) \
+                        + min(monotone_chain_total_paras * 0.1, 1.0)
+        penalty += chain_penalty
     penalty += min(fiction_tell_count * 0.3, 2.0)     # fiction AI tells: up to 2 pts
     penalty += min(telling_count * 0.2, 1.5)          # show-don't-tell: up to 1.5 pts
     penalty += min(structural_tic_count * 0.5, 2.0)   # structural AI tics: up to 2 pts
@@ -232,6 +336,8 @@ def slop_score(text):
         "fiction_ai_tells": fiction_tells,
         "structural_ai_tics": structural_tics,
         "telling_violations": telling_count,
+        "monotone_chain_count": monotone_chain_count,
+        "monotone_chained_paragraphs": monotone_chain_total_paras,
         "em_dash_density": round(em_dash_density, 2),
         "sentence_length_cv": round(sentence_length_cv, 3),
         "transition_opener_ratio": round(transition_ratio, 3),
@@ -273,35 +379,13 @@ def load_all_chapters():
 
 
 def call_judge(prompt, max_tokens=2000):
-    """Call the Anthropic judge LLM and return its response text."""
-    import httpx
-
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": ANTHROPIC_BETA,
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": JUDGE_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.3,
-        "system": "You are a literary critic and novel editor. "
-                  "You evaluate fiction with precision. Always respond with valid JSON. "
-                  "No markdown fences, no preamble -- just the JSON object.",
-        "messages": [
-            {"role": "user", "content": prompt},
-        ],
-    }
-
-    resp = httpx.post(
-        f"{API_BASE_URL}/v1/messages",
-        headers=headers,
-        json=payload,
-        timeout=180,
+    return llm.call_judge(
+        prompt,
+        system='You are a literary critic and novel editor. You evaluate fiction with precision. Always respond with valid JSON. No markdown fences, no preamble -- just the JSON object.',
+        max_tokens=max_tokens,
+        temperature=0.3,
     )
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+
 
 
 def parse_json_response(text):
@@ -696,7 +780,7 @@ def evaluate_chapter(chapter_num):
         prev_chapter_tail=prev_tail,
         chapter_text=chapter_text,
     )
-    raw = call_judge(prompt, max_tokens=8000)
+    raw = call_judge(prompt, max_tokens=16000)
     result = parse_json_response(raw)
 
     # Mechanical slop check -- adjusts score independently of judge

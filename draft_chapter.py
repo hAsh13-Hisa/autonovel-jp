@@ -12,37 +12,19 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
+
+
 CHAPTERS_DIR = BASE_DIR / "chapters"
 
 def call_writer(prompt, max_tokens=16000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "context-1m-2025-08-07",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.8,
-        "system": (
-            "You are a literary fiction writer drafting a fantasy novel chapter. "
-            "You write in third-person limited past tense, locked to one POV character. "
-            "You follow the voice definition exactly. You hit every beat in the outline. "
-            "You never use words from the banned list. You show, never tell emotions. "
-            "Your prose is specific, sensory, grounded. Metaphors come from the character's "
-            "experience. You vary sentence length. You trust the reader. "
-            "You write the FULL chapter -- do not truncate, summarize, or skip ahead."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=600)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return llm.call_writer(
+        prompt,
+        system="あなたはファンタジー小説の章を執筆する文芸小説作家です。三人称限定・過去形で書き、一人のPOVキャラクターに固定します。声の定義に正確に従います。アウトラインのすべてのビートを押さえます。禁止リストの言葉は決して使いません。感情は「見せる」だけで「言いません」。散文は具体的で感覚的で接地しています。比喩はキャラクターの経験に由来します。文の長さを変化させます。読者を信じます。章の全文を書きます——切り詰めたり、要約したり、先へ飛ばしたりしません。章の本文は必ず日本語で書いてください。",
+        max_tokens=max_tokens,
+        temperature=0.8,
+    )
+
 
 def load_file(path):
     try:
@@ -51,8 +33,8 @@ def load_file(path):
         return ""
 
 def extract_chapter_outline(outline_text, chapter_num):
-    """Extract a specific chapter's outline entry."""
-    pattern = rf'### Ch {chapter_num}:.*?(?=### Ch {chapter_num + 1}:|## Foreshadowing|$)'
+    """Extract a specific chapter's outline entry (Japanese format: ### 第N章)."""
+    pattern = rf'###\s*第{chapter_num}章.*?(?=###\s*第{chapter_num + 1}章|##\s*伏線台帳|##\s*Foreshadowing|$)'
     match = re.search(pattern, outline_text, re.DOTALL)
     return match.group(0).strip() if match else "(not found)"
 
@@ -66,18 +48,18 @@ def extract_next_chapter_outline(outline_text, chapter_num):
 
 def main():
     chapter_num = int(sys.argv[1])
-    
+
     # Load all context
     voice = load_file(BASE_DIR / "voice.md")
     world = load_file(BASE_DIR / "world.md")
     characters = load_file(BASE_DIR / "characters.md")
     outline = load_file(BASE_DIR / "outline.md")
     canon = load_file(BASE_DIR / "canon.md")
-    
+
     # Chapter-specific context
     chapter_outline = extract_chapter_outline(outline, chapter_num)
     next_chapter = extract_next_chapter_outline(outline, chapter_num)
-    
+
     # Previous chapter (if exists)
     prev_path = CHAPTERS_DIR / f"ch_{chapter_num - 1:02d}.md"
     if prev_path.exists():
@@ -85,78 +67,70 @@ def main():
         prev_tail = prev_text[-2000:] if len(prev_text) > 2000 else prev_text
     else:
         prev_tail = "(first chapter -- no previous)"
-    
-    prompt = f"""Write Chapter {chapter_num} of "The Second Son of the House of Bells."
 
-VOICE DEFINITION (follow this exactly):
+    prompt = f"""この小説の第{chapter_num}章を書いてください。タイトルと設定はアウトラインに従うこと。
+
+VOICE DEFINITION（声の定義。これに正確に従うこと）：
 {voice}
 
-THIS CHAPTER'S OUTLINE (hit every beat):
+THIS CHAPTER'S OUTLINE（この章のアウトライン。すべてのビートを押さえること）：
 {chapter_outline}
 
-NEXT CHAPTER'S OUTLINE (for continuity -- end this chapter so it flows into the next):
+NEXT CHAPTER'S OUTLINE（続きのため。この章を次に続くように終わらせること）：
 {next_chapter}
 
-PREVIOUS CHAPTER'S ENDING (continue from here):
+PREVIOUS CHAPTER'S ENDING（ここから続けること）：
 {prev_tail}
 
-WORLD BIBLE (reference for worldbuilding details):
+WORLD BIBLE（世界構築の詳細の参照）：
 {world}
 
-CHARACTER REGISTRY (reference for speech patterns and behavior):
+CHARACTER REGISTRY（話し方と行動の参照）：
 {characters}
 
-WRITING INSTRUCTIONS:
-1. Write the COMPLETE chapter. Target ~3,200 words. Do not truncate or summarize.
-2. Third-person limited, past tense, locked to Cass's POV.
-3. Hit ALL numbered beats from the outline in order.
-4. Plant ALL foreshadowing elements listed under "Plants."
-5. Show sensory detail: what Cass hears, smells, feels physically.
-6. The under-note causes specific physical pain (needle behind left eye, not vague discomfort).
-7. Dialogue follows the speech patterns defined in characters.md.
-8. No banned words from voice.md Part 1 guardrails.
-9. No AI fiction tells: no "a sense of," no "couldn't help but feel," no "eyes widened."
-10. Vary sentence length. Short sentences for impact. Longer ones to build.
-11. Metaphors from Cass's experience: sound, bronze, craft, the body's response to pitch.
-12. Trust the reader. Don't explain what scenes mean. Let them land.
-13. Start the chapter in scene, not with exposition. End on a moment, not a summary.
+CANON（確定事実。これに矛盾しないこと）：
+{canon}
 
-PATTERNS TO AVOID (these have been flagged in previous chapters):
-14. NO triadic sensory lists. Never "X. Y. Z." or "X and Y and Z" as three
-    separate items in a row. Combine two, cut one, or restructure.
-15. NO "He did not [verb]" more than once per chapter. Convert negatives
-    to active alternatives or just cut them.
-16. NO "He thought about [X]" constructions. Replace with: the thought
-    itself as a fragment, a physical action, or dialogue.
-17. NO "the way [X] did [Y]" as a simile connector more than twice per
-    chapter. Use different simile structures or cut the comparison.
-18. NO over-explaining after showing. If a scene demonstrates something,
-    do not have the narrator restate it. Trust the scene.
-19. NO section breaks (---) as rhythm crutches. Only use for genuine
-    time/location jumps. Max 2 per chapter.
-20. VARY paragraph length deliberately. Never more than 3 consecutive
-    paragraphs of similar length. Include at least one 1-2 sentence
-    paragraph and one 6+ sentence paragraph.
-21. END the chapter differently from previous chapters. Do NOT end with
-    Cass outside listening to his father work. Find the ending that
-    belongs to THIS chapter specifically.
-22. INCLUDE at least one moment that surprises -- a character saying
-    the wrong thing, an emotional beat arriving early or late, a detail
-    that doesn't fit the expected pattern. Predictable excellence is
-    still predictable.
-23. FAVOR scene over summary. At least 70% of the chapter should be
-    in-scene (moment by moment, with dialogue and action) rather than
-    summary (narrator compressing time).
-24. DIALOGUE should sound like speech, not prose. Characters should
-    occasionally stumble, interrupt, trail off, or say something
-    slightly wrong. A 14-year-old does not speak in polished epigrams.
+執筆指示：
+1. 章の全文を書くこと。目標は約3,200語。切り詰めたり要約したりしないこと。
+2. 三人称限定・過去形、アウトラインで指定された POV キャラクターに固定。
+3. アウトラインの番号付きビートをすべて順番に踏むこと。
+4. 「植え込み」に列挙されたすべての伏線要素を植えること。
+5. 感覚の細部を見せること：POV キャラクターが聞くもの、嗅ぐもの、身体で感じるもの。
+6. この世界の魔法体系の代償は具体的な身体・感覚の結果を伴う（ぼんやりした不快ではなく）。
+7. 台詞は characters.md で定義された話し方に従うこと。
+8. voice.md 第1部のガードレールからの禁止語は使わないこと。
+9. AI小説定型表現は使わないこと：「a sense of」「couldn't help but feel」「eyes widened」は禁止。
+10. 文の長さを変えること。効果のために短い文、構築するために長い文。
+11. 比喩は POV キャラクターの経験から：彼女／彼の世界、仕事、身体の感覚に由来させる。
+12. 読者を信じること。シーンの意味を説明しないこと。伝わるままにさせること。
+13. 章を説明ではなく場面で始めること。要約ではなく一瞬で終えること。
 
-Write the chapter now. Full text, beginning to end.
+避けるべきパターン（前の章で指摘済み）：
+14. 三つ組の感覚リスト禁止。決して「X。Y。Z。」や、続く三つの別々の項目としての「XとYとZ」を
+    使わないこと。二つに統合するか、一つを切るか、再構成する。
+15. 章ごとに「彼は[動詞]しなかった」は1回まで。否定を積極的な代替に変えるか、ただ切る。
+16. 「彼は[X]について考えた」という構文禁止。代わりに：断片としての思考そのもの、
+    身体の動作、または台詞。
+17. 章ごとに比喩の接続詞として「[X]が[Y]するように」は2回まで。別の比喩構造を使うか、比較を切る。
+18. 示した後に説明しすぎないこと。場面が何かを実演したなら、語り手が言い直さないこと。場面を信じる。
+19. リズムの頼りとしての区切り（---）禁止。本物の時間・場所の跳躍にだけ使うこと。章あたり最大2回。
+20. 段落の長さを意図的に変えること。似た長さの段落を3つ連続させないこと。1〜2文の段落を
+    少なくとも1つ、6文以上の段落を少なくとも1つ含めること。
+21. 前の章とは違う終わり方にすること。この章に固有の結末を見つけること。
+22. 驚く瞬間を少なくとも1つ含めること——キャラクターが間違ったことを言う、感情のビートが
+    早くまたは遅く来る、予想のパターンに合わない細部。予測可能な卓越はやはり予測可能だ。
+23. 要約より場面を優先すること。章の少なくとも70%は場面（瞬間ごと、台詞と行動）であるべき。
+    要約（語り手が時間を圧縮する）ではないこと。
+24. 台詞は散文ではなく話し言葉に聞こえるべき。キャラクターは時々つまずき、遮り、言葉を
+    途中で切り、わずかに間違ったことを言うべき。
+
+今すぐ章を書いてください。完全な本文、始めから終わりまで。本文は必ず日本語で書いてください。
 """
 
-    print(f"Drafting Chapter {chapter_num}...", file=sys.stderr)
+    print(f"草稿を執筆中: 第{chapter_num}章...", file=sys.stderr)
     result = call_writer(prompt)
-    
+
     # Save
     out_path = CHAPTERS_DIR / f"ch_{chapter_num:02d}.md"
     out_path.write_text(result)

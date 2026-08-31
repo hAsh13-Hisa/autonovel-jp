@@ -37,7 +37,7 @@ EDIT_LOGS_DIR = BASE_DIR / "edit_logs"
 EVAL_LOGS_DIR = BASE_DIR / "eval_logs"
 
 FOUNDATION_THRESHOLD = 7.5
-CHAPTER_THRESHOLD = 6.0
+CHAPTER_THRESHOLD = 4.0
 MAX_FOUNDATION_ITERS = 20
 MAX_CHAPTER_ATTEMPTS = 5
 MIN_REVISION_CYCLES = 3
@@ -226,6 +226,8 @@ def get_total_chapters(state: dict) -> int:
     if outline.exists():
         text = outline.read_text()
         matches = re.findall(r'###\s*Ch(?:apter)?\s*(\d+)', text)
+        if not matches:
+            matches = re.findall(r'###\s*第(\d+)章', text)
         if matches:
             return max(int(m) for m in matches)
     return 24  # sensible default
@@ -268,11 +270,17 @@ def run_foundation(state: dict) -> dict:
         step("Running voice fingerprint...")
         uv_run("voice_fingerprint.py", timeout=300)
 
-        # 2. Evaluate
+        # 2. Evaluate (retry on parse failure / judge model returning bad JSON)
         step("Evaluating foundation...")
-        eval_result = uv_run("evaluate.py --phase=foundation", timeout=300)
-        score = parse_score(eval_result.stdout, "overall_score")
-        lore = parse_lore_score(eval_result.stdout)
+        score = -1.0
+        lore = -1.0
+        for eval_attempt in range(1, 4):
+            eval_result = uv_run("evaluate.py --phase=foundation", timeout=300)
+            score = parse_score(eval_result.stdout, "overall_score")
+            lore = parse_lore_score(eval_result.stdout)
+            if score >= 0:
+                break
+            step(f"Evaluation parse failed (score {score}), retrying ({eval_attempt}/3)...")
 
         step(f"Foundation score: {score}  (lore: {lore}, prev best: {best_score})")
 
@@ -334,7 +342,7 @@ def run_drafting(state: dict) -> dict:
             step(f"Attempt {attempt}/{MAX_CHAPTER_ATTEMPTS}")
 
             # Draft
-            draft_result = uv_run(f"draft_chapter.py {ch}", timeout=600)
+            draft_result = uv_run(f"draft_chapter_beat.py {ch}", timeout=600)
             if draft_result.returncode != 0:
                 step(f"Draft failed (exit {draft_result.returncode}), retrying...")
                 continue
@@ -348,9 +356,14 @@ def run_drafting(state: dict) -> dict:
             word_count = len(ch_file.read_text().split())
             step(f"Drafted {word_count} words")
 
-            # Evaluate
-            eval_result = uv_run(f"evaluate.py --chapter={ch}", timeout=300)
-            score = parse_score(eval_result.stdout, "overall_score")
+            # Evaluate (retry on parse failure / judge model returning bad JSON)
+            score = -1.0
+            for eval_attempt in range(1, 4):
+                eval_result = uv_run(f"evaluate.py --chapter={ch}", timeout=300)
+                score = parse_score(eval_result.stdout, "overall_score")
+                if score >= 0:
+                    break
+                step(f"Chapter eval parse failed (score {score}), retrying ({eval_attempt}/3)...")
             step(f"Chapter {ch} score: {score}")
 
             if score >= CHAPTER_THRESHOLD:

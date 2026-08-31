@@ -11,34 +11,21 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
 
 def call_writer(prompt, max_tokens=16000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.7,
-        "system": (
-            "You are a fantasy worldbuilder with deep knowledge of Sanderson's Laws, "
-            "Le Guin's prose philosophy, and TTRPG-quality lore design. "
-            "You write world bibles that are specific, interconnected, and imply depth "
-            "beyond what's stated. You never use AI slop words (delve, tapestry, myriad, etc). "
-            "You write in clean, direct prose. Every rule has a cost. Every cultural detail "
-            "implies a history. Every location has a sensory signature."
+    return llm.call_writer(
+        prompt,
+        system=(
+            "あなたはサンダーソンの法則とル＝グウィンの散文哲学、TTRPG品質のロア設計に通じた"
+            "ファンタジー世界構築者です。あなたは具体的で相互接続され、書かれた以上に奥行きを"
+            "暗示する世界バイブルを書きます。AIスラング語（delve、tapestry、myriadなど）は決して"
+            "使いません。明快で直接的な散文で書きます。すべてのルールには代償があり、すべての文化の"
+            "細部は歴史を暗示し、すべての場所は感覚的な特徴を持ちます。出力は必ず日本語で書いてください。"
         ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+        max_tokens=max_tokens,
+        temperature=0.7,
+    )
 
 seed = (BASE_DIR / "seed.txt").read_text()
 voice = (BASE_DIR / "voice.md").read_text()
@@ -49,78 +36,75 @@ voice_lines = voice.split('\n')
 part2_start = next(i for i, l in enumerate(voice_lines) if 'Part 2' in l)
 voice_part2 = '\n'.join(voice_lines[part2_start:])
 
-prompt = f"""Build a complete world bible for this fantasy novel. This is the WORLD.MD file -- 
-the definitive reference for everything that EXISTS in this world. A writer should be able 
-to resolve any worldbuilding question from this document alone.
+prompt = f"""このファンタジー小説の完全な世界バイブルを作り上げてください。これは WORLD.MD ファイルです——この世界に存在するすべてのものの決定的な参照元。書き手はこの文書だけでどんな世界構築上の疑問も解決できるべきです。
 
-SEED CONCEPT:
+SEED CONCEPT（種コンセプト）：
 {seed}
 
-VOICE IDENTITY (the tone and register of this novel):
+VOICE IDENTITY（この小説の調子と言語）：
 {voice_part2}
 
-CRAFT REQUIREMENTS (from CRAFT.md -- follow these):
-- Magic system needs HARD RULES with COSTS and LIMITATIONS per Sanderson's Second Law
-- Limitations >= powers in narrative prominence
-- Trace implications of magic through society, economy, law, religion
-- At least 2-3 societal implications of magic explored in depth
-- History must create PRESENT-DAY TENSIONS that drive the plot (not just backdrop)
-- Geography must be specific and sensory (not generic fantasy)
-- Iceberg principle: imply more than you state
-- Interconnection: pulling one thread should move everything
+CRAFT REQUIREMENTS（CRAFT.md から。これに従うこと）：
+- 魔法システムにはサンダーソンの第二法則に従った HARD RULES（厳格なルール）と COSTS（代償）、LIMITATIONS（制限）が必要
+- 叙述上の重要性では制限 >= 力
+- 魔法の含意を社会、経済、法、宗教にまで追跡すること
+- 魔法の社会的含意を少なくとも2〜3つ深く探求すること
+- 歴史はプロットを動かす PRESENT-DAY TENSIONS（現在の緊張）を生み出すこと（単なる背景ではない）
+- 地理は具体的で感覚的であること（一般的なファンタジーではない）
+- アイスバーグ原則：書かれた以上を暗示すること
+- 相互接続：一つの糸を引けば、すべてが動くこと
 
-STRUCTURE THE DOCUMENT WITH THESE SECTIONS:
+このセクション構成で文書を構築すること：
 
-## Cosmology & History
-A timeline of major events. Focus on events that create PRESENT-DAY tensions.
-Include the founding myth, key turning points, and recent events that matter to the plot.
+## 宇宙論と歴史
+主要な出来事のタイムライン。現在の緊張を生み出す出来事に焦点を当てる。建国神話、重要な転換点、プロットに関わる最近の出来事を含める。
 
-## Magic System
-### Hard Rules (Tonal Law)
-Specific, testable rules. What intervals do what. What progressions bind.
-What happens when you break the rules. Include COSTS and LIMITATIONS prominently.
+## 魔法システム
+### ハードルール（この世界の魔法体系）
+具体的で検証可能なルール。どの間隔が何をするか。どの進行が何を束縛するか。ルールを破るとどうなるか。代償と制限を目立つように含める。
 
-### Soft Magic (Cass's Gift)
-What he perceives, how it works, what it costs HIM specifically.
-This should be mysterious but have consistent internal logic.
+### ソフトマジック（主人公の特異な才能）
+彼／彼女が何を知覚するか、どう機能するか、特に彼／彼女にとって何が代償になるか。神秘的に見えるが一貫した内部ロジックを持つべき。
 
-### Societal Implications
-How does tonal law shape: governance, commerce, education, class structure,
-crime, family life, childhood, aging, disability?
+### 社会的含意
+魔法体系がどう形作るか：統治、商取引、教育、階級構造、犯罪、家族生活、幼少期、老化、障害。
 
-## Geography
-Cantamura's physical layout, districts, the natural amphitheater's acoustic properties.
-Neighboring places (at least 2-3). Sensory signatures for each location.
+## 地理
+主要な舞台の物理的レイアウト、地区、特徴的な場所の音響・感覚特性。隣接する場所（少なくとも2〜3）。各場所の感覚的特徴。
 
-## Factions & Politics
-Who holds power, who wants it, who's being crushed by it.
-At least 3-4 factions with opposing interests.
+## 派閥と政治
+誰が権力を持ち、誰がそれを欲し、誰がそれに押しつぶされているか。少なくとも3〜4の対立する関心を持つ派閥。
 
-## Bestiary / Flora / Natural World
-What's unique about the natural world in and around Cantamura?
+## 動物相／植物相／自然世界
+この世界の内外の自然世界の何が独特か？
 
-## Cultural Details
-Customs, taboos, festivals, food, clothing, coming-of-age rituals.
-Things that make daily life feel SPECIFIC.
+## 文化的な細部
+風習、禁忌、祭り、食べ物、服装、成人儀礼。日々の生活を具体的に感じさせるもの。
 
-## Internal Consistency Rules
-Hard constraints a writer must not violate. The physics of sound in this world.
-What's possible and what's not.
+## 内的整合性ルール
+書き手が破ってはいけないハードな制約。この世界の音の物理。可能なことと不可能なこと。
 
-IMPORTANT:
-- Be SPECIFIC. Not "the city has districts" but name them, describe them, 
-  give them sensory signatures.
-- Every rule should have a COST or LIMITATION stated alongside it.
-- Include 2-3 facts per section that are unexplained, hinting at deeper systems 
-  (iceberg depth).
-- Facts should INTERCONNECT: the magic should shape the politics, the geography 
-  should shape the culture, the history should explain current faction conflicts.
-- Write in clean, direct prose. No AI slop. No "rich tapestry." No "delving."
-- The world should feel grounded and LIVED-IN, not imagined. Think: what does 
-  breakfast smell like? What do children play? How do old people complain?
-- Target ~3000-4000 words. Dense, not padded.
+重要：
+- 具体的であること。「都市に地区がある」ではなく、名前を付け、描写し、感覚的な特徴を与えること。
+- すべてのルールに代償や制限を併記すること。
+- 各セクションに、説明されていない事実を2〜3つ含め、より深いシステムをほのめかすこと（アイスバーグの深み）。
+- 事実は相互接続するべき：魔法は政治を形作り、地理は文化を形作り、歴史は現在の派の対立を説明するべき。
+- 明快で直接的な散文で書く。AIスラングなし。安っぽい「豊かなタペストリー」なし。「深掘り」なし。
+- 世界は想像されたものではなく、接地し、生きていると感じられること。考えること：朝食はどんな匂いか？子供は何をして遊ぶか？老人はどうこぼすか？
+- 目標は約3000〜4000語。詰め込みではなく密度。
+
+出力はすべて日本語で書いてください。
 """
 
 print("Calling writer model...", file=sys.stderr)
 result = call_writer(prompt)
+# Retry on empty/short output (intermittent empty responses from some models)
+attempt = 1
+while (len(result.strip()) < 500) and attempt < 4:
+    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    result = call_writer(prompt)
+    attempt += 1
+# Write the world bible to world.md
+world_path = BASE_DIR / "world.md"
+world_path.write_text(result.strip() + "\n")
 print(result)

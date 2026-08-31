@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate outline.md from seed + world + characters + mystery + craft."""
+"""Generate outline.md (part 1: chapters 1-12) from seed + world + characters + mystery + craft."""
 import os
 import sys
 from pathlib import Path
@@ -8,34 +8,17 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+import llm
+
 
 def call_writer(prompt, max_tokens=16000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "context-1m-2025-08-07",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.5,
-        "system": (
-            "You are a novel architect with deep knowledge of Save the Cat beats, "
-            "Sanderson's plotting principles, Dan Harmon's Story Circle, and MICE Quotient. "
-            "You build outlines that an author can draft from without inventing structure "
-            "on the fly. Every chapter has beats, emotional arc, and try-fail cycle type. "
-            "You never use AI slop words. You write in clean, direct prose."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=600)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return llm.call_writer(
+        prompt,
+        system="あなたはSave the Catのビート、サンダーソンのプロット原則、ダン・ハーモンのストーリーサークル、MICE商に深い知識を持つ小説設計者です。あなたは作者がその場で構造を発明せずに草稿を書けるようなアウトラインを構築します。AIスラング語は決して使いません。出力は必ず日本語で書いてください。",
+        max_tokens=max_tokens,
+        temperature=0.5,
+    )
+
 
 seed = (BASE_DIR / "seed.txt").read_text()
 world = (BASE_DIR / "world.md").read_text()
@@ -49,86 +32,81 @@ voice_lines = voice.split('\n')
 part2_start = next(i for i, l in enumerate(voice_lines) if 'Part 2' in l)
 voice_part2 = '\n'.join(voice_lines[part2_start:])
 
-prompt = f"""Build a complete chapter outline for this fantasy novel. Target: 22-26 chapters,
-~80,000 words total (~3,000-4,000 words per chapter).
+prompt = f"""このファンタジー小説の章アウトラインの前半（第1章〜第12章）を構築してください。
+全体は22〜26章、合計約80,000語（1章あたり約3,000〜4,000語）の予定です。今回は第1章〜第12章だけを書いてください。
 
-SEED CONCEPT:
+SEED CONCEPT（種コンセプト）：
 {seed}
 
-THE CENTRAL MYSTERY (author's eyes only -- reader discovers gradually):
+THE CENTRAL MYSTERY（中心の謎。作者だけの目——読者は徐々に発見する）：
 {mystery}
 
-WORLD BIBLE:
+WORLD BIBLE（世界バイブル）：
 {world}
 
-CHARACTER REGISTRY:
+CHARACTER REGISTRY（キャラクター登録簿）：
 {characters}
 
-VOICE (tone and register):
+VOICE（調子と言語）：
 {voice_part2}
 
-CRAFT REFERENCE (structures to follow):
+CRAFT REFERENCE（従うべき構造）：
 {craft}
 
-BUILD THE OUTLINE WITH:
+アウトラインを以下で構築すること：
 
-## Act Structure
-Map out Act I (0-23%), Act II Part 1 (23-50%), Act II Part 2 (50-77%), Act III (77-100%).
-State the percentage marks for the key novel.
+## 幕構成
+第I幕（0〜23%）、第II幕前編（23〜50%）、第II幕后編（50〜77%）、第III幕（77〜100%）を割り当てる。主要な出来事のパーセンテージ位置を示す。
 
-## Chapter-by-Chapter Outline
+## 章ごとのアウトライン（第1章〜第12章）
 
-For EACH chapter, provide:
-### Ch N: [Title]
-- **POV:** (always Cass, third-person limited)
-- **Location:** Which districts/locations
-- **Save the Cat beat:** Which beat this chapter serves (Opening Image, Setup, Catalyst, etc.)
-- **% mark:** Where this falls in the novel
-- **Emotional arc:** Starting emotion → ending emotion
-- **Try-fail cycle:** Yes-but / No-and / No-but / Yes-and
-- **Beats:** 3-5 specific scene beats that must happen
-- **Plants:** Foreshadowing elements planted in this chapter
-- **Payoffs:** Foreshadowing elements that pay off here
-- **Character movement:** What changes for Cass (or other characters) by chapter's end
-- **The lie:** How Cass's lie ("if I master the system, I can fix things from inside") is
-  reinforced or challenged in this chapter
-- **~Word count target:** for pacing
+各章で提供すること：
+### 第N章：[タイトル]
+- **POV（視点）：**（SEED の登場人物から選んだ主要キャラクター、三人称限定）
+- **場所：**どの場所か
+- **Save the Catビート：**この章が果たすビート（オープニングイメージ、セットアップ、触媒など）
+- **%位置：**小説のどこに当たるか
+- **感情のアーク：** 始まりの感情 → 終わりの感情
+- **トライ・フェイル・サイクル：** イエス・バット／ノー・アンド／ノー・バット／イエス・アンド
+- **ビート：** 起こらなければならない具体的なシーンのビート3〜5
+- **植え込み：** この章で植えられる伏線要素
+- **回収：** ここで回収される伏線要素
+- **キャラクターの動き：** 章末までに POV キャラクター（または他のキャラクター）に何が変わるか
+- **嘘：** POV キャラクターの嘘（SEED のテーマから導く）がこの章で
+  強化されるか挑戦されるか
+- **約〜語数の目標：** リズムのため
 
-## Foreshadowing Ledger
+主要プロット構造（SEED の「ストーリー構成」セクションに従うこと）：
 
-A table tracking every planted thread:
-| Thread | Planted (Ch) | Reinforced (Ch) | Payoff (Ch) | Type |
+第1幕（第1〜6章あたり）：主人公の世界、彼女／彼の痛み、才能、日常、家族を確立する。
+謎を早めに植える（導き手の異様な力、禁じられた場所、隠された過去）。
+触覚：何かが主人公に中心的な謎の調査を強いる。
 
-Include at LEAST 15 threads. Types: object, dialogue, action, symbolic, structural.
+第2幕前編（第7〜12章あたり）：調査。主人公は異世界の秘密を掘り下げ、
+導き手と出会い、仲間と同盟し、自分の能力をより明確に理解し始める。
+中間点：主人公が彼女／彼の手法を変える部分的な真実を学ぶ（偽の勝利か敗北）。
 
-KEY PLOT ARCHITECTURE:
+制約：
+- 主人公の調査は、通過儀礼アークに重ねられたミステリープロットのように感じられるべき
+- 安定の罠：悪いことは悪いままであるべき。すべてがきれいに解決されるべきではない
+- 中心的な謎の存在（導き手）はどこかの時点で本人として登場すること（記憶や手紙だけではない）
+- 少なくとも3章は「静かな」章であること——キャラクター中心、アクション少なめ、感情豊か
+- トライ・フェイルの種類を変える：60%以上は「はい・しかし」または「いいえ・そして」
 
-Act I (Ch 1-6ish): Establish Cass's world, his pain, his gift, the Academy, his family.
-Plant the mystery early (the locked room, the forbidden bells, father's tremor).
-Catalyst: something forces Cass to investigate Perin's contract.
-
-Act II Part 1 (Ch 7-12ish): Investigation. Cass digs into the Corda contract, encounters
-Maret, allies with Torvald and Lenne, begins hearing the harmonic more clearly.
-Midpoint: Cass learns a partial truth that changes his approach (false victory or defeat).
-
-Act II Part 2 (Ch 13-18ish): Pressure mounts. Maret moves against the Bellwrights.
-Father's secrets begin to surface. Cass's lie is increasingly unsustainable.
-All Is Lost: Cass confronts his father and learns the full truth.
-
-Act III (Ch 19-24ish): Cass understands the question. Must choose how to answer.
-The climax plays out using the established intervals of Tonal Law.
-The resolution shows the aftermath of his choice.
-
-CONSTRAINTS:
-- The climax must be mechanically resolvable using established Tonal Law intervals
-- Cass's investigation should feel like a mystery plot overlaid on a coming-of-age arc
-- The Stability Trap: bad things must stay bad. Not everything resolves cleanly.
-- Perin must appear in person at some point (not just in memory/letters)
-- At least 3 chapters should be "quiet" -- character-focused, low-action, emotionally rich
-- Vary the try-fail types: 60%+ should be "yes-but" or "no-and"
-- The foreshadowing ledger must have plant-to-payoff distances of at least 3 chapters
+出力はすべて日本語で書いてください。第1章〜第12章まで、完全に書いてください。
 """
 
 print("Calling writer model...", file=sys.stderr)
 result = call_writer(prompt)
+# Retry on empty/short output
+attempt = 1
+while (len(result.strip()) < 500) and attempt < 4:
+    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    result = call_writer(prompt)
+    attempt += 1
+# Write part 1 to outline.md and hand off to /tmp/outline_output.md for part 2
+outline_path = BASE_DIR / "outline.md"
+outline_path.write_text(result.strip() + "\n")
+tmp_path = Path("/tmp/outline_output.md")
+tmp_path.write_text(result.strip() + "\n")
 print(result)
