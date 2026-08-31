@@ -94,7 +94,12 @@ def make_drop_cap(latex_body):
     return drop + '\n\n' + rest
 
 chapters_tex = []
-for n in range(1, 20):
+chapter_nums = sorted(
+    int(m.group(1))
+    for name in os.listdir(CHAPTERS_DIR)
+    if (m := re.match(r"ch_(\d+)\.md$", name))
+)
+for n in chapter_nums:
     path = os.path.join(CHAPTERS_DIR, f"ch_{n:02d}.md")
     with open(path) as f:
         text = f.read()
