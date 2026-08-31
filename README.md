@@ -18,6 +18,22 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 >   - `style_exemplar.md`（文体アンカー）を毎章のプロンプトに注入して文体ドリフトを防止
 > - **サンプル小説データはリセット済み**：`seed.txt` に自分の企画書を書いて開始します
 
+### 本家のまま・未使用の部分（注記）
+
+| 対象 | 状態 |
+|------|------|
+| `gen_audiobook.py`, `audiobook_voices.json`（ElevenLabs） | **本家まま・未使用**。オーディオブック工程はこの日本語版では未検証 |
+| `gen_cover_composite.py`, `gen_cover_print.py`（表紙PIL処理） | 本家まま・未使用 |
+| `typeset/` 以下（LaTeX・ePubテンプレ一式） | 本家まま・未使用（`build_tex.py` のみパス修正＋存在章だけ組むよう改修、空chaptersで動作確認済み） |
+| `landing/index.html` | 本家まま（ランディングページテンプレ） |
+| `main.py` | 本家由来の stub（Hello World）のまま |
+| `PIPELINE.md`, `WORKFLOW.md`, `CRAFT.md`, `ANTI-SLOP.md`, `ANTI-PATTERNS.md`, `program.md`, 本家README | **英語のまま未翻訳**（本家の設計参照ドキュメント） |
+| `.gitignore`, `pyproject.toml`, `uv.lock`, `.python-version` | モデル非依存のため本家まま |
+
+> 動作実績があるのは **seed → foundation → drafting → evaluate/adversarial → revision** までです。
+> Art（fal.ai）・Audiobook（ElevenLabs）・Typeset の各工程は、本家設計を引き継いでいるだけで
+> このリポジトリでは検証していません（`build_tex.py` のみ、上記の通り動作確認済み）。
+
 ---
 
 ## Quick Start
