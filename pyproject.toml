@@ -1,7 +1,7 @@
 [project]
 name = "autonovel"
 version = "0.1.0"
-description = "Add your description here"
+description = "Japanese light-novel edition of autonovel: OpenAI-compatible multi-endpoint pipeline with per-role models and dialogue quality gates"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",

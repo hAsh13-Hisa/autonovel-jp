@@ -50,7 +50,9 @@ ROLES_BASE_URL_ENV = {
 }
 
 # Fallback default base URL (local Ollama)
-DEFAULT_BASE_URL = "http://host.docker.internal:11434/v1"
+# Default: local Ollama on the same machine. Inside Docker/containers,
+# point at the host via: AUTONOVEL_API_BASE_URL=http://host.docker.internal:11434/v1
+DEFAULT_BASE_URL = "http://localhost:11434/v1"
 
 
 def _resolve(role: str):
@@ -98,11 +100,21 @@ def call(
     }
     if system:
         payload["messages"].insert(0, {"role": "system", "content": system})
+    # Hybrid "thinking" models (e.g. glm-5.3) burn the completion budget on
+    # reasoning and return empty prose. Disable thinking when requested.
+    if os.environ.get("AUTONOVEL_DISABLE_THINKING", "") == "1":
+        payload["think"] = False
 
     url = f"{base}/chat/completions"
     resp = httpx.post(url, headers=headers, json=payload, timeout=900)
     resp.raise_for_status()
     data = resp.json()
+    usage = data.get("usage") or {}
+    import sys as _sys
+    if usage:
+        _sys.stderr.write(
+            f"[llm] role={role} model={model} prompt_tokens={usage.get('prompt_tokens')} "
+            f"completion_tokens={usage.get('completion_tokens')} total={usage.get('total_tokens')}\n")
     return data["choices"][0]["message"]["content"]
 
 

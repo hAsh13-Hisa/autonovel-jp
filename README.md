@@ -54,7 +54,7 @@ uv run python run_pipeline.py --from-scratch
 
 ```bash
 # ローカルOllama
-AUTONOVEL_API_BASE_URL=http://host.docker.internal:11434/v1
+AUTONOVEL_API_BASE_URL=http://localhost:11434/v1
 AUTONOVEL_WRITER_MODEL=qwen3.6:latest
 
 # クラウド（ollama.com / DeepSeek / OpenRouter 等、OpenAI互換なら何でも）
@@ -63,7 +63,7 @@ AUTONOVEL_API_KEY=sk-...
 AUTONOVEL_WRITER_MODEL=deepseek-v4-pro:0813
 
 # 混在（執筆はクラウド、評価はローカル）
-AUTONOVEL_JUDGE_BASE_URL=http://host.docker.internal:11434/v1
+AUTONOVEL_JUDGE_BASE_URL=http://localhost:11434/v1
 AUTONOVEL_JUDGE_MODEL=qwen3.8:latest
 ```
 
@@ -119,7 +119,8 @@ LaTeX組版、表紙アート、オーディオブック台本、ePub、ラン�
 ### Infrastructure
 | Tool | Purpose |
 |------|---------|
-| `llm.py` | 統一OpenAI互換クライアント（writer/revision/judge/review の4役割） |
+| `llm.py` | 統一OpenAI互換クライアント（writer/revision/judge/review の4役割）。`AUTONOVEL_DISABLE_THINKING=1` で思考型モデルの推論バジェット消費による空応答を防止。使用トークンを標準エラー出力へ記録 |
+| `quota_guard.py` | `ollama.com` のクラウド使用率をポーリングし、上限到達時に子プロセスを自動停止(SIGSTOP)・リセット後に自動再開(SIGCONT)する汎用ラッパー。長時間バッチ実行用 |
 
 ### Evaluation
 | Tool | Purpose |
