@@ -270,6 +270,19 @@ def run_foundation(state: dict) -> dict:
         step("Running voice fingerprint...")
         uv_run("voice_fingerprint.py", timeout=300)
 
+        # 1.5. Character consistency gate — キャラ登録簿 ↔ outline の整合を検証
+        #      （モデルが characters.md のキャラを使わず独自に追加する逸脱を検出）
+        step("Verifying character consistency (characters.md ↔ outline)...")
+        cc = uv_run("verify_character_consistency.py --outline", timeout=120)
+        if cc.returncode != 0:
+            step("WARNING: character consistency check FAILED — "
+                 "outline に未定義キャラ or characters.md に未登場キャラがあります。"
+                 "この iteration は破棄します。")
+            git_reset_hard("HEAD")
+            log_result("discarded", "foundation", 0.0, 0, "discard",
+                       f"Iteration {i}: character consistency FAILED")
+            continue
+
         # 2. Evaluate (retry on parse failure / judge model returning bad JSON)
         step("Evaluating foundation...")
         score = -1.0
@@ -367,6 +380,17 @@ def run_drafting(state: dict) -> dict:
             step(f"Chapter {ch} score: {score}")
 
             if score >= CHAPTER_THRESHOLD:
+                # Character consistency gate — この章に未定義キャラが登場していないか
+                # （モデルが characters.md にないキャラを勝手に登場させる逸脱を検出）
+                cc = uv_run("verify_character_consistency.py --chapters", timeout=120)
+                if cc.returncode != 0:
+                    step("WARNING: character consistency FAILED — "
+                         "この章に未定義キャラが登場しています。破棄して再試行します。")
+                    log_result("discarded", f"ch{ch:02d}", score, word_count,
+                               "discard", f"Chapter {ch}: character consistency FAILED")
+                    if ch_file.exists():
+                        run_tool(f"git checkout -- chapters/ch_{ch:02d}.md 2>/dev/null || true")
+                    continue
                 commit_hash = git_add_commit(
                     f"ch{ch:02d}: score {score}, {word_count}w")
                 log_result(commit_hash, f"ch{ch:02d}", score, word_count,
