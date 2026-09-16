@@ -59,6 +59,15 @@ STOPWORDS_CORE = {
 HONORIFIC_SUFFIXES = ("様", "さん", "殿", "ちゃん", "先生")
 
 
+def strip_html_comments(text: str) -> str:
+    """HTML コメント（<!-- ... -->）を除去する。
+
+    テンプレートの書式見本（コメント内の `## Name (POV / non-POV)` など）が
+    キャラ定義として誤検出され、まっさらなクローンで誤ってハードFAILになるのを防ぐ。
+    """
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+
+
 def load_terms(path: "Path | None") -> set:
     """語彙ファイル（1行1語・# コメント）を読む。無ければ空集合。"""
     if not path or not Path(path).exists():
@@ -104,7 +113,7 @@ def extract_defined_names(characters: Path) -> list:
     if not characters.exists():
         return []
     names = []
-    for line in characters.read_text(encoding="utf-8").splitlines():
+    for line in strip_html_comments(characters.read_text(encoding="utf-8")).splitlines():
         m = re.match(r"^##\s+(.+?)(?:（.*?）)?\s*$", line.strip())
         if m:
             name = m.group(1).strip()
@@ -119,7 +128,7 @@ def extract_seed_characters(seed: Path) -> list:
         return []
     names = []
     in_section = False
-    for line in seed.read_text(encoding="utf-8").splitlines():
+    for line in strip_html_comments(seed.read_text(encoding="utf-8")).splitlines():
         if re.match(r"^登場人物", line):
             in_section = True
             continue
@@ -138,7 +147,7 @@ def extract_outline_povs(outline: Path) -> list:
     if not outline.exists():
         return []
     povs = []
-    for line in outline.read_text(encoding="utf-8").splitlines():
+    for line in strip_html_comments(outline.read_text(encoding="utf-8")).splitlines():
         m = re.search(r"\*\*POV[：:]\*\*\s*(.+)", line)
         if m:
             povs.append(m.group(1).strip())
