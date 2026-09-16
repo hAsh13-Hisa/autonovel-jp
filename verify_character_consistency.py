@@ -13,14 +13,26 @@ characters.md に定義したキャラが本文で一度も使われなかった
   2. outline.md の POV に登場するキャラが characters.md に定義されているか（未定義キャラ）
 
 【警告 — 要確認（日本語は大文字小文字がなく頻度ベースの固有名詞検出は不正確なため）】
-  3. outline.md に高頻度で登場する語が characters.md に定義されておらず、
+  3. outline.md（または chapters/）に高頻度で登場する語が characters.md に定義されておらず、
      かつ seed.txt の登場人物にもない場合（未定義キャラの候補）
+
+作品固有の語彙はこのファイルに埋め込まず、リポジトリ側の語彙ファイルで与える:
+
+  <repo>/verify_terms.txt    1行1語。世界観用語・概念語など「キャラ名ではないが
+                             本文/アウトラインに頻出する語」を列挙する（# でコメント）。
+  <repo>/verify_aliases.txt  1行につき「別名=本体名」。短縮形・異表記の誤検出を防ぐ。
+
+どちらも無くても動作する（その場合、キャラ名と汎用ストップワードのみで判定）。
+敬称付きの形（〜様/〜さん/〜殿/〜ちゃん/〜先生）は、定義済みキャラ名・別名から
+自動生成するので列挙不要。
 
 使い方:
   python verify_character_consistency.py --dir <repo>            # 全チェック
   python verify_character_consistency.py --dir <repo> --outline  # outline のみ
   python verify_character_consistency.py --dir <repo> --chapters # chapters のみ
   python verify_character_consistency.py --dir <repo> --json     # 機械可読出力
+  python verify_character_consistency.py --dir <repo> \\
+      --terms my_terms.txt --aliases my_aliases.txt              # 語彙ファイルを明示指定
 
 exit 0 = 整合（警告のみなら 0）/ exit 1 = ハードFAIL（未登場 or 未定義キャラ）
 """
@@ -31,39 +43,63 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# 本文/outline で多用されるが「キャラ名」ではない語（誤検出を防ぐ）
-STOPWORDS = {
-    # 世界・概念
-    "帝", "大天鏡", "天鏡", "鏡都", "曇り", "映り", "素見", "筆真", "現世",
-    "平安京", "宮中", "女房", "陰陽師", "鏡士", "大鏡士", "無映者", "鏡銘",
-    "予言", "導き手", "記録者", "観察者", "源氏物語", "中宮", "鏡術", "生贄",
-    "代償", "真実", "世界", "存在", "言葉", "文字", "意味", "場所", "正体",
-    "理解", "消耗", "定着", "目標", "語数", "位置", "感情", "回収", "伏線",
-    "二人", "自分", "彼女", "彼", "私", "わたし", "わたくし", "あなた",
-    # 敬称付き（本体名は別途照合）
-    "清少納言様", "紫式部様", "晴明様", "源氏様", "鏡守様", "帝様",
-    # 構造語
-    "ビート", "植え込み", "POV", "章", "幕", "前半", "後半", "総括",
+# 本文/outline で多用されるが「キャラ名」ではない語（誤検出を防ぐ）。
+# ここには作品に依存しない語だけを置く。作品固有の語は verify_terms.txt へ。
+STOPWORDS_CORE = {
+    # 人称・指示語
+    "二人", "自分", "彼女", "彼", "私", "わたし", "わたくし", "あなた", "俺", "僕", "君",
+    # 構造語（このパイプラインの日本語ドキュメントで使う見出し・欄名）
+    "ビート", "植え込み", "POV", "章", "幕", "前半", "後半", "総括", "伏線", "語数",
+    # 汎用の抽象語
+    "真実", "世界", "存在", "言葉", "文字", "意味", "場所", "正体", "理解", "目標",
+    "位置", "感情", "回収", "代償", "記憶", "時間", "心", "声", "影",
 }
 
-# 定義済みキャラの短縮形・別名 → 本体名（警告の誤検出を防ぐ）
-ALIASES = {
-    "晴明": "安倍晴明",
-    "式部": "紫式部",
-    "少納言": "清少納言",
-    "清少納言": "清少納言",
-    "紫式部": "紫式部",
-    "安倍晴明": "安倍晴明",
-    "源氏": "源氏",
-    "帝": "天鏡の帝",
-    "黒鏡": "影の首領・黒鏡",
-    "白菊": "白菊",
-    "無名": "無名",
-    "鏡守": "鏡守",
-}
+# 敬称（定義済みキャラ名・別名から自動生成する）
+HONORIFIC_SUFFIXES = ("様", "さん", "殿", "ちゃん", "先生")
 
 
-def extract_defined_names(characters: Path) -> list[str]:
+def load_terms(path: "Path | None") -> set:
+    """語彙ファイル（1行1語・# コメント）を読む。無ければ空集合。"""
+    if not path or not Path(path).exists():
+        return set()
+    terms = set()
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            terms.add(line)
+    return terms
+
+
+def load_aliases(path: "Path | None") -> dict:
+    """別名ファイル（別名=本体名・# コメント）を読む。無ければ空の辞書。"""
+    if not path or not Path(path).exists():
+        return {}
+    aliases = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            alias, _, canon = line.partition("=")
+            alias, canon = alias.strip(), canon.strip()
+            if alias and canon:
+                aliases[alias] = canon
+    return aliases
+
+
+def build_stopwords(defined: list, aliases: dict, extra_terms: set) -> set:
+    """作品語彙・別名・敬称形を合成したストップワード集合。"""
+    stopwords = set(STOPWORDS_CORE) | set(extra_terms)
+    bases = {n.split("（")[0].strip() for n in defined}
+    bases |= set(aliases.keys()) | set(aliases.values())
+    for base in bases:
+        if base:
+            stopwords |= {base + suf for suf in HONORIFIC_SUFFIXES}
+    return stopwords
+
+
+def extract_defined_names(characters: Path) -> list:
     """characters.md の `## キャラ名（かな）` 見出しからキャラ名を抽出."""
     if not characters.exists():
         return []
@@ -77,7 +113,7 @@ def extract_defined_names(characters: Path) -> list[str]:
     return names
 
 
-def extract_seed_characters(seed: Path) -> list[str]:
+def extract_seed_characters(seed: Path) -> list:
     """seed.txt の「登場人物:」欄からキャラ名を抽出."""
     if not seed.exists():
         return []
@@ -97,7 +133,7 @@ def extract_seed_characters(seed: Path) -> list[str]:
     return names
 
 
-def extract_outline_povs(outline: Path) -> list[str]:
+def extract_outline_povs(outline: Path) -> list:
     """outline.md の `- **POV：** キャラ名` から POV キャラを抽出."""
     if not outline.exists():
         return []
@@ -119,38 +155,38 @@ def extract_text(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-def check_defined_but_unused(defined: list[str], outline_text: str,
-                             chapter_text: str) -> list[str]:
+def check_defined_but_unused(defined: list, outline_text: str,
+                             chapter_text: str, stopwords: set) -> list:
     """characters.md に定義されたが outline/本文に一度も登場しないキャラ."""
     unused = []
     for name in defined:
         base = name.split("（")[0].strip()
-        if base in STOPWORDS:
+        if base in stopwords:
             continue
         if base not in outline_text and base not in chapter_text:
             unused.append(name)
     return unused
 
 
-def check_pov_undefined(defined: list[str], outline_povs: list[str]) -> list[str]:
+def check_pov_undefined(defined: list, outline_povs: list, stopwords: set) -> list:
     """outline の POV に登場するが characters.md に定義されていないキャラ."""
     defined_bases = {n.split("（")[0].strip() for n in defined}
     undefined = []
     for pov in outline_povs:
         base = pov.split("（")[0].strip()
-        if base and base not in defined_bases and base not in STOPWORDS:
+        if base and base not in defined_bases and base not in stopwords:
             undefined.append(f"outline POV: {pov}")
     return undefined
 
 
-def check_frequent_undefined(defined: list[str], seed_names: list[str],
-                             outline_text: str) -> list[str]:
-    """outline に高頻度で登場するが、characters.md にも seed にもない語（要確認）."""
+def check_frequent_undefined(defined: list, seed_names: list, text: str,
+                             stopwords: set, aliases: dict) -> list:
+    """テキストに高頻度で登場するが、characters.md にも seed にもない語（要確認）."""
     defined_bases = {n.split("（")[0].strip() for n in defined}
     # 別名マップで定義済みキャラに解決できる語は既知扱い
-    known = defined_bases | set(seed_names) | STOPWORDS | set(ALIASES.keys())
+    known = defined_bases | set(seed_names) | stopwords | set(aliases.keys())
     freq = {}
-    for m in re.finditer(r"[\u4e00-\u9fff]{2,4}", outline_text):
+    for m in re.finditer(r"[\u4e00-\u9fff]{2,4}", text):
         w = m.group(0)
         if w in known:
             continue
@@ -167,6 +203,10 @@ def main() -> int:
     ap.add_argument("--outline", action="store_true", help="outline のみチェック")
     ap.add_argument("--chapters", action="store_true", help="chapters のみチェック")
     ap.add_argument("--json", action="store_true", help="機械可読出力")
+    ap.add_argument("--terms", default=None,
+                    help="作品固有の語彙ファイル（既定: <dir>/verify_terms.txt）")
+    ap.add_argument("--aliases", default=None,
+                    help="別名=本体名のファイル（既定: <dir>/verify_aliases.txt）")
     args = ap.parse_args()
 
     base = Path(args.dir)
@@ -181,17 +221,25 @@ def main() -> int:
     outline_text = extract_text(outline)
     chapter_text = extract_text(chapters) if not args.outline else ""
 
+    terms_path = Path(args.terms) if args.terms else base / "verify_terms.txt"
+    aliases_path = Path(args.aliases) if args.aliases else base / "verify_aliases.txt"
+    extra_terms = load_terms(terms_path)
+    aliases = load_aliases(aliases_path)
+    stopwords = build_stopwords(defined, aliases, extra_terms)
+
     # ハードFAIL（信頼できる信号）
-    unused = check_defined_but_unused(defined, outline_text, chapter_text)
-    undefined = check_pov_undefined(defined, outline_povs)
+    unused = check_defined_but_unused(defined, outline_text, chapter_text, stopwords)
+    undefined = check_pov_undefined(defined, outline_povs, stopwords)
 
     # 警告（要確認）
     warnings = []
     if not args.chapters:
-        warnings = check_frequent_undefined(defined, seed_names, outline_text)
+        warnings = check_frequent_undefined(defined, seed_names, outline_text,
+                                            stopwords, aliases)
     elif chapter_text:
         # chapters モード: 本文の高頻度語も未定義キャラ候補として警告
-        warnings = check_frequent_undefined(defined, seed_names, chapter_text)
+        warnings = check_frequent_undefined(defined, seed_names, chapter_text,
+                                            stopwords, aliases)
 
     unused = sorted(set(unused))
     undefined = sorted(set(undefined))
@@ -215,6 +263,9 @@ def main() -> int:
         print(f"characters.md 定義キャラ: {len(defined)}")
         print(f"seed.txt 登場人物: {len(seed_names)}")
         print(f"outline POV キャラ: {len(outline_povs)}")
+        print(f"語彙ファイル: 固有語 {len(extra_terms)}件"
+              f" / 別名 {len(aliases)}件"
+              f"（{'あり' if extra_terms or aliases else 'なし'}）")
         print()
         if unused:
             print("[FAIL] 定義されたが未登場のキャラ:")
