@@ -102,8 +102,13 @@ def call(
         payload["messages"].insert(0, {"role": "system", "content": system})
     # Hybrid "thinking" models (e.g. glm-5.3) burn the completion budget on
     # reasoning and return empty prose. Disable thinking when requested.
+    # NOTE (2026-09-17): deepseek-v4.1-flash IGNORES think:False — for it use
+    # AUTONOVEL_REASONING_EFFORT=none (measured: reasoning 0字, prose returned).
     if os.environ.get("AUTONOVEL_DISABLE_THINKING", "") == "1":
         payload["think"] = False
+    reasoning_effort = os.environ.get("AUTONOVEL_REASONING_EFFORT", "").strip()
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
 
     url = f"{base}/chat/completions"
     resp = httpx.post(url, headers=headers, json=payload, timeout=900)

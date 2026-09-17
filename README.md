@@ -77,7 +77,7 @@ AUTONOVEL_WRITER_MODEL=qwen3.6:latest
 # クラウド（ollama.com / DeepSeek / OpenRouter 等、OpenAI互換なら何でも）
 AUTONOVEL_API_BASE_URL=https://ollama.com/v1
 AUTONOVEL_API_KEY=sk-...
-AUTONOVEL_WRITER_MODEL=deepseek-v4-pro:0813
+AUTONOVEL_WRITER_MODEL=deepseek-v4.1-flash
 
 # 混在（執筆はクラウド、評価はローカル）
 AUTONOVEL_JUDGE_BASE_URL=http://localhost:11434/v1
