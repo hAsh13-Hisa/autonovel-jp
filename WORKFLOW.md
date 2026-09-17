@@ -89,6 +89,7 @@ uv run python gen_audiobook.py --assemble       # Concatenate
 
 ### Export
 ```bash
+uv run python convert_half_width.py chapters/    # Convert short half-width to full-width (for vertical writing)
 uv run python build_outline.py                  # Rebuild outline
 uv run python build_arc_summary.py              # Rebuild summaries
 python3 typeset/build_tex.py && cd typeset && tectonic novel.tex  # PDF
