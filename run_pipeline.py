@@ -56,6 +56,14 @@ DRAFTER = os.environ.get("AUTONOVEL_DRAFTER", "draft_chapter_split.py")
 # 単発ドラフターより遥かに長い。10分では足りない。
 DRAFT_TIMEOUT = int(os.environ.get("AUTONOVEL_DRAFT_TIMEOUT", "3600"))
 
+# 初稿（drafting）の章ゲートで「記録のみ＝破棄条件にしない」項目。
+# 破棄条件に残すのは 文字数・重複・記号・比喩の型（＝修正が効く欠陥）。
+# セリフ比・最小窓は「完成稿の物差し」で、生原稿は落ちるのが普通（実測 2026-10-03:
+# 生原稿は6項目中3項目FAIL／人手ポリッシュ後の採用版は全PASS）。
+# 初稿でこれらを破棄条件にすると1章あたり最大15回の章生成を消費して無駄になる。
+# 手動で完成稿を検査するときは未指定（＝全項目が合否対象）にする。
+GATE_WARN_ITEMS = os.environ.get("AUTONOVEL_GATE_WARN_ITEMS", "dialogue_ratio,min_window")
+
 PHASE_ORDER = ["foundation", "drafting", "revision", "export"]
 
 
@@ -404,16 +412,18 @@ def run_drafting(state: dict) -> dict:
                         run_tool(f"git checkout -- chapters/ch_{ch:02d}.md 2>/dev/null || true")
                     continue
                 # Chapter quality gates — 文体6項目（文字数/セリフ比/最小窓/重複/記号/比喩の型）
-                # FAIL なら破棄して次の attempt で書き直す（2026-10-03 接続）
-                gate = uv_run(
-                    f"verify_chapter_gates.py --band {CHAPTER_GATE_BAND} "
+                # 破棄するのは GATE_WARN_ITEMS 以外の項目（既定: 文字数・重複・記号・比喩の型）。
+                # セリフ比・最小窓は初稿では [WARN] 記録のみ（完成稿の物差し。2026-10-03 の実測で判断）
+                gate = run_tool(
+                    f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
+                    f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} "
                     f"chapters/ch_{ch:02d}.md",
                     timeout=180)
                 if gate.returncode != 0:
-                    step("WARNING: chapter quality gates FAILED — 文体ゲートに不合格"
-                         "（セリフ比・最小窓・重複・記号・比喩の型）。破棄して再試行します。")
+                    step("WARNING: chapter quality gates FAILED — 破棄条件の項目に不合格"
+                         "（文字数・重複・記号・比喩の型）。破棄して再試行します。")
                     for line in (gate.stdout or "").splitlines():
-                        if "[FAIL]" in line or line.startswith("RESULT"):
+                        if "[FAIL]" in line or "[WARN]" in line or line.startswith("RESULT"):
                             print(f"      {line.strip()}")
                     log_result("discarded", f"ch{ch:02d}", score, word_count,
                                "discard", f"Chapter {ch}: quality gates FAILED")

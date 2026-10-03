@@ -96,7 +96,16 @@ def main() -> int:
     sys.path.insert(0, str(BASE_DIR))
     from draft_chapter_split import min_window_ratio  # noqa: E402
 
+    # 警告のみ（＝破棄条件にしない）項目。env AUTONOVEL_GATE_WARN_ITEMS="min_window,dialogue_ratio"
+    # 初稿（drafting）では「最小窓・セリフ比」を記録のみにする運用のため run_pipeline が指定する。
+    # 未指定なら全項目が合否対象（手動の完成稿ゲートはこの既定のまま）。
+    warn_raw = os.environ.get("AUTONOVEL_GATE_WARN_ITEMS", "")
+    WARN_ITEMS = {s.strip() for s in warn_raw.split(",") if s.strip()}
+    if WARN_ITEMS:
+        print(f"（警告のみ: {', '.join(sorted(WARN_ITEMS))} — 判定に含めない）")
+
     all_ok = True
+    warned = set()
     for arg in files:
         path = find_file(arg)
         text = Path(path).read_text(encoding="utf-8")
@@ -120,27 +129,40 @@ def main() -> int:
         mw = min_window_ratio(text) * 100
         dots, dash = text.count("……"), text.count("——")
         eng = count_english_words(text)
-        for label, val, ok in [
-            ("文字数", f"{chars} ({lo}-{hi})", lo <= chars <= hi),
-            ("セリフ比(文字ベース)", f"{ratio}% (>=50)", ratio >= 50),
-            ("最小窓500字", f"{mw:.0f}% (>=55)", mw >= 55),
-            ("重複(12字以上x2)", f"{dup} (=0)", dup == 0),
-            ("……/——/英語", f"{dots}/{dash}/{eng} (<=2/<=1/0)",
+
+        def emit(key: str, label: str, val: str, ok: bool) -> None:
+            """1項目を出力する。warn 指定の項目は落ちても all_ok を倒さない。"""
+            nonlocal all_ok
+            if ok:
+                print(f"  [OK] {label}: {val}")
+            elif key in WARN_ITEMS:
+                warned.add(key)
+                print(f"  [WARN] {label}: {val} — 記録のみ（破棄条件にしない）")
+            else:
+                all_ok = False
+                print(f"  [FAIL] {label}: {val}")
+
+        for key, label, val, ok in [
+            ("chars", "文字数", f"{chars} ({lo}-{hi})", lo <= chars <= hi),
+            ("dialogue_ratio", "セリフ比(文字ベース)", f"{ratio}% (>=50)", ratio >= 50),
+            ("min_window", "最小窓500字", f"{mw:.0f}% (>=55)", mw >= 55),
+            ("dup", "重複(12字以上x2)", f"{dup} (=0)", dup == 0),
+            ("symbols", "……/——/英語", f"{dots}/{dash}/{eng} (<=2/<=1/0)",
              dots <= 2 and dash <= 1 and eng == 0),
         ]:
-            all_ok = all_ok and ok
-            print(f"  [{'OK' if ok else 'FAIL'}] {label}: {val}")
+            emit(key, label, val, ok)
         # --- 比喩の型の反復（合否ゲート）---
         mk = metaphor_counts(text)
         mk_total = sum(mk.values())
         mk_density = mk_total / (chars / 1000) if chars else 0.0
         mk_same = mk["まるで"] + mk["みたい"]
         detail = "/".join(f"{k}{v}" for k, v in mk.items() if v) or "なし"
-        mk_ok = mk_density <= 3.0 and mk_same <= 4
-        all_ok = all_ok and mk_ok
-        print(f"  [{'OK' if mk_ok else 'FAIL'}] 比喩密度: {mk_density:.1f}/1000字 (<=3.0)"
-              f"・まるで+みたい={mk_same} (<=4) — 内訳 {detail}")
+        emit("metaphor", "比喩密度",
+             f"{mk_density:.1f}/1000字 (<=3.0)・まるで+みたい={mk_same} (<=4) — 内訳 {detail}",
+             mk_density <= 3.0 and mk_same <= 4)
     print()
+    if warned:
+        print(f"（警告のみで通過: {', '.join(sorted(warned))}）")
     print("RESULT:", "ALL PASS" if all_ok else "FAILURES")
     return 0 if all_ok else 1
 
