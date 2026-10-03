@@ -37,6 +37,8 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 >   - 比喩の型の反復を測る（比喩密度 ≤3.0/1000字・まるで+みたい ≤4。閾値は採用版の実測から逆算）
 >   - **`verify_chapter_gates.py`（章ゲート6項目）を `run_pipeline.py` の drafting が呼び、
 >     FAIL の章は自動で破棄して書き直す**（文字数／セリフ比／最小窓／重複／……・——・英語／比喩の型）
+>   - ドラフトは fork 推奨の分割ドラフター（`draft_chapter_split.py`）が既定。env `AUTONOVEL_DRAFTER` で
+>     本家の `draft_chapter_beat.py` に戻せる（分割ドラフターは長時間なので `AUTONOVEL_DRAFT_TIMEOUT` も調整可）
 > - **サンプル小説データはリセット済み**：`seed.txt` を自分の種コンセプトに差し替えて開始します。
 >   種は `seed.py`（ゼロから生成）または `seed.py --riff "雑な着想"`（着想を展開）で作り、
 >   出力をそのまま `seed.txt` に貼ります（`seed.txt` は書式の見本も兼ねます）
@@ -55,7 +57,7 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 | `typeset/` 以下（LaTeX・ePubテンプレ一式） | 本家まま・未使用（`build_tex.py` のみパス修正＋存在章だけ組むよう改修、空chaptersで動作確認済み） |
 | `landing/index.html` | 本家まま（ランディングページテンプレ） |
 | `main.py` | 本家由来の stub（Hello World）のまま |
-| `draft_chapter_beat.py`（自律実行の既定ドラフター） | 本家まま。`run_pipeline.py` の drafting は今もこれを呼びます。**fork 推奨の `draft_chapter_split.py` は自律実行に未接続**（章ゲートのセリフ比>=50% で FAIL が続く場合は差し替えが必要） |
+| `draft_chapter_beat.py`（本家の既定ドラフター） | 本家まま・**既定からは外れました**。`run_pipeline.py` の drafting は fork 推奨の `draft_chapter_split.py` を呼びます（戻すなら env `AUTONOVEL_DRAFTER=draft_chapter_beat.py`） |
 | `PIPELINE.md`, `WORKFLOW.md`, `CRAFT.md`, `ANTI-SLOP.md`, `ANTI-PATTERNS.md`, `program.md`, 本家README | **英語のまま未翻訳**（本家の設計参照ドキュメント） |
 | `.gitignore`, `pyproject.toml`, `uv.lock`, `.python-version` | モデル非依存のため本家まま |
 
@@ -142,7 +144,7 @@ LaTeX組版、表紙アート、オーディオブック台本、ePub、ラン�
 ### Drafting
 | Tool | Purpose |
 |------|---------|
-| `draft_chapter_split.py` | **推奨** 長さ分割ドラフター＋会話ゲート |
+| `draft_chapter_split.py` | **自律実行の既定**（`run_pipeline.py` が呼ぶ）長さ分割ドラフター＋会話ゲート。1章＝約1,200字×5チャンクで、各チャンクのセリフ比率を検査して再試行 |
 | `draft_chapter_single.py` | 1回呼び出しドラフター（文体は滑らか、会話密度は下がる） |
 | `draft_chapter_beat.py` | ビート分割ドラフター（短文になりがち） |
 | `draft_chapter.py` | 本家由来の単発ドラフター |

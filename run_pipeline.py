@@ -49,6 +49,13 @@ PLATEAU_DELTA = 0.3
 # 帯を変えたいときは env AUTONOVEL_CHAPTER_GATE_BAND="6000 99999" のように上書きする。
 CHAPTER_GATE_BAND = os.environ.get("AUTONOVEL_CHAPTER_GATE_BAND", "3000 99999")
 
+# 章を書くドラフター。fork 推奨の分割ドラフター（セリフ比率ゲート内蔵）を既定にする。
+# 本家の draft_chapter_beat.py に戻すなら env AUTONOVEL_DRAFTER=draft_chapter_beat.py。
+DRAFTER = os.environ.get("AUTONOVEL_DRAFTER", "draft_chapter_split.py")
+# 分割ドラフターは1章を約1,200字×5チャンクで作る（各チャンク最大3回再試行）ため、
+# 単発ドラフターより遥かに長い。10分では足りない。
+DRAFT_TIMEOUT = int(os.environ.get("AUTONOVEL_DRAFT_TIMEOUT", "3600"))
+
 PHASE_ORDER = ["foundation", "drafting", "revision", "export"]
 
 
@@ -359,8 +366,8 @@ def run_drafting(state: dict) -> dict:
         for attempt in range(1, MAX_CHAPTER_ATTEMPTS + 1):
             step(f"Attempt {attempt}/{MAX_CHAPTER_ATTEMPTS}")
 
-            # Draft
-            draft_result = uv_run(f"draft_chapter_beat.py {ch}", timeout=600)
+            # Draft（既定は fork 推奨の分割ドラフター。セリフ比率ゲート内蔵）
+            draft_result = uv_run(f"{DRAFTER} {ch}", timeout=DRAFT_TIMEOUT)
             if draft_result.returncode != 0:
                 step(f"Draft failed (exit {draft_result.returncode}), retrying...")
                 continue
