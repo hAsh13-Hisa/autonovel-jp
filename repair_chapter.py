@@ -178,26 +178,6 @@ REWRITE_PROMPT = """次の一文が、この作品で繰り返し使われてい
 JSONのみ: {{"rewrite": "<書き換え後の一文>"}}
 """
 
-INSERT_SYSTEM = (
-    "あなたは日本語の小説の推敲をする編集者です。"
-    "指定された場面に、自然な会話を足します。地の文の文体・人称・語彙を崩しません。JSONのみで答えます。"
-)
-
-INSERT_PROMPT = """次の場面は会話が少なく、読者が退屈しやすい箇所です。ここに**自然な会話（「」のやりとり）を2〜3往復**足してください。
-
-【場面（この前後を含む抜粋）】
-{scene}
-
-条件:
-- 登場人物はこの抜粋に出ている人物だけ。新しい人物・新しい事実・新しい展開を足さない
-- 地の文とト書きでつなぎ、会話は「」で書く
-- 文体・人称・語尾はこの抜粋に合わせる
-- 200〜400字程度。段落として差し込める形で返す（前後の地の文は書かない）
-
-JSONのみ: {{"insert": "<差し込む本文>"}}
-"""
-
-
 def rewrite_metaphor(text: str, log: list, max_edits: int = 20) -> str:
     """比喩の予算を超えている文を1文ずつ言い換える（超えなくなるまで）。
 
@@ -260,30 +240,99 @@ def weakest_window(text: str) -> tuple:
     return best
 
 
+DIALOGUE_PROMPT = """次の地の文の段落は、会話が少なく読者が退屈しやすい箇所です。
+この段落を、**同じ内容のまま会話（「」のやりとり）中心**に書き換えてください。
+
+【この前後の流れ】
+{scene}
+
+【書き換える段落】
+{target}
+
+条件:
+- 登場人物はこの抜粋に出ている人物だけ。新しい人物・新しい事実・新しい展開を足さない
+- 会話は2〜3往復。地の文は最小限のト書きだけ
+- 文体・人称・語尾はこの抜粋に合わせる
+- 長さは元の0.8〜1.2倍（長さを保つと、他の区画の区切りが崩れない）
+- 書き換えた段落だけを返す（前後の地の文は書かない）
+
+JSONのみ: {{"rewrite": "<書き換えた段落>"}}
+"""
+
+
+def _body(text: str) -> str:
+    """見出し行を除いた本文（ゲートと同じ土俵）。"""
+    return "\n".join(l for l in text.split("\n") if not l.strip().startswith("#"))
+
+
+def block_ratios(body: str) -> list:
+    """ゲートと同じ物差し: 本文を500字ずつに区切った各区画の「会話を含む行」の割合。"""
+    out = []
+    for i in range(0, len(body), WINDOW):
+        sl = [l.strip() for l in body[i:i + WINDOW].split("\n") if l.strip()]
+        out.append(sum(1 for l in sl if "「" in l or "」" in l) / len(sl) if sl else 0.0)
+    return out
+
+
+def weakest_block(text: str) -> tuple:
+    """最も会話が薄い区画（割合, 索引, 区画の本文）。"""
+    body = _body(text)
+    rr = block_ratios(body)
+    if not rr:
+        return 0.0, 0, ""
+    idx = min(range(len(rr)), key=lambda k: rr[k])
+    return rr[idx], idx, body[idx * WINDOW:(idx + 1) * WINDOW]
+
+
+def target_paragraph(block: str) -> str:
+    """区画のうち、いちばん長い「会話を含まない段落」を選ぶ（そこを会話に置き換える）。"""
+    paras = [p.strip() for p in block.split("\n") if p.strip()]
+    cands = [p for p in paras if "「" not in p and "」" not in p and len(p) >= 60]
+    if not cands:
+        cands = [p for p in paras if "「" not in p and len(p) >= 30]
+    return max(cands, key=len) if cands else ""
+
+
 def insert_dialogue(text: str, log: list) -> str:
-    """会話が薄い窓に会話を足す。改善しなければ元に戻す。"""
-    r, pos = weakest_window(text)
-    scene = text[max(0, pos - 200):pos + WINDOW + 200]
+    """会話が薄い区画の地の文を、**同じ内容の会話に置き換える**。改善しなければ元に戻す。
+
+    足すのではなく置き換えるのは、長さを保つと区画の区切りが崩れず、
+    他の区画の判定を巻き込まないため（足す方式は下流の区画がずれて悪化しやすかった）。
+    """
+    r, idx, block = weakest_block(text)
+    target = target_paragraph(block)
+    if not target:
+        log.append("会話に置き換えられる地の文が見つからなかったので見送り")
+        return text
+    at = text.find(target)
+    if at < 0:
+        log.append("置き換え対象の段落が見つからなかったので見送り")
+        return text
+    scene = text[max(0, at - 300):at + len(target) + 300]
     try:
-        raw = llm.call("revision", INSERT_PROMPT.format(scene=scene),
-                       system=INSERT_SYSTEM, max_tokens=700, temperature=0.5)
-        add = str(llm_parse(raw).get("insert") or "").strip()
+        raw = llm.call("revision", DIALOGUE_PROMPT.format(scene=scene, target=target),
+                       system=REWRITE_SYSTEM, max_tokens=900, temperature=0.5)
+        new = str(llm_parse(raw).get("rewrite") or "").strip()
     except Exception as exc:                 # noqa: BLE001
-        log.append(f"会話の追加に失敗（{exc}）")
+        log.append(f"会話への置き換えに失敗（{exc}）")
         return text
-    if not add or "「" not in add:
-        log.append("会話の追加案が返らなかったので見送り")
+    if not new or "「" not in new:
+        log.append("会話の案が返らなかったので見送り")
         return text
-    before = min_window_ratio(text)
-    # 窓の終わりの段落境界に差し込む
-    at = text.find("\n", pos + WINDOW)
-    at = len(text) if at < 0 else at
-    cand = text[:at] + "\n\n" + add + "\n" + text[at:]
-    after = min_window_ratio(cand)
-    if after <= before:
-        log.append(f"会話を足しても最小窓が改善しないので見送り（{before * 100:.0f}%→{after * 100:.0f}%）")
+    if not (0.7 * len(target) <= len(new) <= 1.5 * len(target)):
+        log.append(f"長さが変わりすぎたので見送り（{len(target)}→{len(new)}字）: {new[:60]}…")
         return text
-    log.append(f"会話を追加（最小窓 {before * 100:.0f}%→{after * 100:.0f}%）: {add[:40]}…")
+    cand = text[:at] + new + text[at + len(target):]
+    before_min, after_min = min_window_ratio(text), min_window_ratio(cand)
+    got = block_ratios(_body(cand))
+    got = got[idx] if idx < len(got) else 0.0
+    if got <= r or after_min < before_min:
+        log.append(f"会話に置き換えても改善しないので見送り"
+                   f"（対象の区画 {r * 100:.0f}%→{got * 100:.0f}% / "
+                   f"全体の最小 {before_min * 100:.0f}%→{after_min * 100:.0f}%）: {new[:60]}…")
+        return text
+    log.append(f"地の文を会話に置き換え（対象の区画 {r * 100:.0f}%→{got * 100:.0f}%、"
+               f"全体の最小 {before_min * 100:.0f}%→{after_min * 100:.0f}%）: {new[:100]}…")
     return cand
 
 
@@ -312,15 +361,20 @@ def main() -> int:
     ap.add_argument("--max-rounds", type=int, default=2)
     ap.add_argument("--no-insert", action="store_true", help="会話の追加をしない")
     ap.add_argument("--dry-run", action="store_true", help="直せる箇所を数えるだけ")
+    ap.add_argument("--only", default="symbol,dup,metaphor,insert",
+                    help="実行する修復の種類（カンマ区切り: symbol,dup,metaphor,insert）")
+    ap.add_argument("--force", action="store_true",
+                    help="ゲートを通っていても修復を実行する（種類ごとの動作確認用）")
     args = ap.parse_args()
 
+    kinds = {k.strip() for k in args.only.split(",") if k.strip()}
     lo, hi = (int(x) for x in args.band.split())
     src = Path(args.path)
     text = src.read_text(encoding="utf-8")
     m0 = measure(text, lo, hi)
     print(f"== 修復前 == {src.name}")
     show("before", m0)
-    if all_ok(m0):
+    if all_ok(m0) and not args.force:
         print("（すでに全項目とおっているので何もしません）")
         return 0
 
@@ -330,18 +384,21 @@ def main() -> int:
         print(f"記号: ……{m0['dots']} / ——{m0['dash']}  → 3個目以降を置換")
         print(f"比喩: 密度 {m0['metaphor_density']:.1f}（上限 {METAPHOR_DENSITY_MAX}）"
               f"・まるで+みたい {m0['metaphor_same']}（上限 {METAPHOR_SAME_MAX}）→ 超過分を言い換え")
-        r, pos = weakest_window(text)
-        print(f"最小窓: {m0['min_window']:.0f}%（下限55%）/ 最も薄い窓 {r * 100:.0f}% は {pos}字目 → 会話を追加")
+        r, idx, _ = weakest_block(text)
+        print(f"最小窓: {m0['min_window']:.0f}%（下限55%）/ 最も薄い区画は索引{idx}で {r * 100:.0f}%"
+              f" → そこの地の文を会話に置き換え")
         return 0
 
     cur = text
     for rnd in range(1, max(1, args.max_rounds) + 1):
-        print(f"\n-- 修復ラウンド {rnd}/{args.max_rounds} --")
-        cur = cut_symbols(cur, log)
-        cur = drop_dup_sentences(cur, log)
-        if not measure(cur, lo, hi)["metaphor_ok"]:
+        print(f"\n-- 修復ラウンド {rnd}/{args.max_rounds} -- 種類: {', '.join(sorted(kinds))}")
+        if "symbol" in kinds:
+            cur = cut_symbols(cur, log)
+        if "dup" in kinds:
+            cur = drop_dup_sentences(cur, log)
+        if "metaphor" in kinds and not measure(cur, lo, hi)["metaphor_ok"]:
             cur = rewrite_metaphor(cur, log)
-        if not args.no_insert and not measure(cur, lo, hi)["min_window_ok"]:
+        if "insert" in kinds and not args.no_insert and not measure(cur, lo, hi)["min_window_ok"]:
             cur = insert_dialogue(cur, log)
         m = measure(cur, lo, hi)
         show(f"round{rnd}", m)
