@@ -64,6 +64,14 @@ DRAFT_TIMEOUT = int(os.environ.get("AUTONOVEL_DRAFT_TIMEOUT", "3600"))
 # 手動で完成稿を検査するときは未指定（＝全項目が合否対象）にする。
 GATE_WARN_ITEMS = os.environ.get("AUTONOVEL_GATE_WARN_ITEMS", "dialogue_ratio,min_window")
 
+# 章ゲートに落ちたとき、まず**修復**を試すか（2026-10-03 Hisa決定）。
+# 修復 = repair_chapter.py。落ちた箇所だけを直す（重複・記号はコードで、比喩・最小窓はその箇所だけLLMで）。
+# 修復版がゲートを通れば採用、通らなければ破棄して次の attempt で書き直す。
+# 0 にすると従来どおり「落ちたら即破棄」。
+REPAIR_ON_FAIL = os.environ.get("AUTONOVEL_REPAIR_ON_FAIL", "1") == "1"
+# 分割ドラフターの章を1章ぶん修復する（言い換えは十数回のLLM呼び出し）。実測 約14秒。
+REPAIR_TIMEOUT = int(os.environ.get("AUTONOVEL_REPAIR_TIMEOUT", "1800"))
+
 PHASE_ORDER = ["foundation", "drafting", "revision", "export"]
 
 
@@ -414,21 +422,46 @@ def run_drafting(state: dict) -> dict:
                 # Chapter quality gates — 文体6項目（文字数/セリフ比/最小窓/重複/記号/比喩の型）
                 # 破棄するのは GATE_WARN_ITEMS 以外の項目（既定: 文字数・重複・記号・比喩の型）。
                 # セリフ比・最小窓は初稿では [WARN] 記録のみ（完成稿の物差し。2026-10-03 の実測で判断）
-                gate = run_tool(
-                    f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
-                    f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} "
-                    f"chapters/ch_{ch:02d}.md",
-                    timeout=180)
+                gate_cmd = (f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
+                            f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} ")
+                gate = run_tool(gate_cmd + f"chapters/ch_{ch:02d}.md", timeout=180)
+                healed = False
                 if gate.returncode != 0:
-                    step("WARNING: chapter quality gates FAILED — 破棄条件の項目に不合格"
-                         "（文字数・重複・記号・比喩の型）。破棄して再試行します。")
+                    step("WARNING: chapter quality gates FAILED — "
+                         "破棄条件の項目に不合格（文字数・重複・記号・比喩の型）")
                     for line in (gate.stdout or "").splitlines():
                         if "[FAIL]" in line or "[WARN]" in line or line.startswith("RESULT"):
                             print(f"      {line.strip()}")
+                    # まず修復を試す（落ちた箇所だけを直す。2026-10-03 Hisa決定）
+                    if REPAIR_ON_FAIL:
+                        step("修復パスを試します（落ちた箇所だけを直す）")
+                        rep = uv_run(f"repair_chapter.py chapters/ch_{ch:02d}.md "
+                                     f"--out chapters/ch_{ch:02d}_repaired.md "
+                                     f'--band "{CHAPTER_GATE_BAND}"',
+                                     timeout=REPAIR_TIMEOUT)
+                        repaired = ch_file.with_name(f"ch_{ch:02d}_repaired.md")
+                        if rep.returncode in (0, 1) and repaired.exists():
+                            for line in (rep.stdout or "").splitlines():
+                                if line.strip().startswith("- "):
+                                    print(f"      {line.strip()}")
+                            gate2 = run_tool(gate_cmd + f"chapters/ch_{ch:02d}_repaired.md",
+                                             timeout=180)
+                            if gate2.returncode == 0:
+                                run_tool(f"mv chapters/ch_{ch:02d}_repaired.md "
+                                         f"chapters/ch_{ch:02d}.md")
+                                healed = True
+                                word_count = len(ch_file.read_text(encoding="utf-8"))
+                                step(f"修復版がゲートを通過しました — 採用します（{word_count}字）")
+                            else:
+                                print("      修復版もゲートを通りませんでした（破棄して書き直します）")
+                        else:
+                            print(f"      修復できませんでした（exit {rep.returncode}）")
+                if gate.returncode != 0 and not healed:
                     log_result("discarded", f"ch{ch:02d}", score, word_count,
                                "discard", f"Chapter {ch}: quality gates FAILED")
                     if ch_file.exists():
                         run_tool(f"git checkout -- chapters/ch_{ch:02d}.md 2>/dev/null || true")
+                    run_tool(f"rm -f chapters/ch_{ch:02d}_repaired.md")
                     continue
                 commit_hash = git_add_commit(
                     f"ch{ch:02d}: score {score}, {word_count}w")
