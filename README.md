@@ -165,6 +165,7 @@ LaTeX組版、表紙アート、オーディオブック台本、ePub、ラン�
 | `adversarial_edit.py` | "Cut 500 words" analysis → classified cuts |
 | `compare_chapters.py` | Head-to-head Elo tournament |
 | `reader_panel.py` | 4-persona novel-level evaluation |
+| `panel_one_question.py` | **面白さの実測器（質問は1つ）**。全章の抜粋を1回の呼び出しで渡し「続きを読みたいか」で必ず3層に分けさせる（相対評価）。絶対点0-10・一対比較は識別しないと実測済み（下記）。`--md` で人間用ブリーフ（下層＝読むべき章）、`--repeat` で多数決＋不安定章の検出、引用は本文と機械照合 |
 | `review.py` | Dual-persona review with stopping conditions |
 | `verify_chapter_gates.py` | **章ゲート6項目**（文字数／セリフ比／最小窓／重複／……・——・英語／比喩の型）。`run_pipeline.py` の drafting が呼び、FAIL の章は破棄→書き直し |
 | `dialogue_ratio.py` | 章の計測（文字ベースのセリフ比・重複文・台詞の長さ）。`verify_chapter_gates.py` が読み取る |
