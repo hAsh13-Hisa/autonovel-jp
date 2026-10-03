@@ -21,11 +21,6 @@ load_dotenv(BASE_DIR / ".env")
 import llm
 
 
-
-
-ANTHROPIC_BETA = "context-1m-2025-08-07"
-
-
 def call_writer(prompt, max_tokens=4000):
     return llm.call_writer(
         prompt,
