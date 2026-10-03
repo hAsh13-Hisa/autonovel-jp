@@ -710,9 +710,52 @@ def parse_panel_consensus(panel_path: Path) -> list[dict]:
     return unique[:5]  # top 3-5 consensus items
 
 
+REVISION_GATES = os.environ.get("AUTONOVEL_REVISION_GATES", "1") != "0"
+
+
+def gate_cmd_for(path: str) -> str:
+    """章ゲート（文体6項目）を1ファイルにかけるコマンド。"""
+    return (f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
+            f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} {path}")
+
+
+def changed_chapters() -> list:
+    """直前の改訂で書き換わった章ファイル（未コミットの差分）。"""
+    res = run_tool("git diff --name-only -- chapters", timeout=60)
+    return [BASE_DIR / p for p in (res.stdout or "").splitlines()
+            if p.strip().endswith(".md")]
+
+
+def revision_gate_check(changed: list) -> int:
+    """本文を触った直後に章ゲートを回し、FAIL した章を元に戻す（2026-10-03 Hisa決定）。
+
+    改訂は「スコア」だけで採否を決めていたので、文体が崩れても気づけなかった。
+    本文を書き換えたら必ずゲートを通し、落ちた章は git で戻す。
+    """
+    if not REVISION_GATES or not changed:
+        return 0
+    reverted = 0
+    for path in changed:
+        res = run_tool(gate_cmd_for(path), timeout=300)
+        if res.returncode == 0:
+            continue
+        step(f"  章ゲートFAIL → 元に戻します: {path.name}")
+        for line in (res.stdout or "").splitlines():
+            if "[FAIL]" in line:
+                print(f"      {line.strip()}")
+        run_tool(f"git checkout -- {path}")
+        log_result("reverted", path.stem, "", 0, "discard",
+                   "改訂で本文を触ったら章ゲートFAIL（元に戻した）")
+        reverted += 1
+    return reverted
+
+
 def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
     """
     Revision phase: adversarial editing, reader panel, targeted revisions.
+
+    本文を書き換えるステップの直後には必ず章ゲート（文体6項目）を回し、
+    落ちた章は元に戻す（`AUTONOVEL_REVISION_GATES=0` で無効化）。
     """
     banner("PHASE 3: REVISION", "=")
 
@@ -729,6 +772,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         # -- Step 1: Adversarial editing pass --
         step("Running adversarial editing on all chapters...")
         uv_run("adversarial_edit.py all", timeout=900)
+        revision_gate_check(changed_chapters())      # 本文を触ったら章ゲート
 
         # -- Step 2: Apply mechanical cuts (only if apply_cuts.py exists) --
         apply_cuts = BASE_DIR / "apply_cuts.py"
@@ -736,6 +780,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             step("Applying mechanical cuts (OVER-EXPLAIN, REDUNDANT)...")
             run_tool("uv run python apply_cuts.py all "
                      "--types OVER-EXPLAIN REDUNDANT --min-fat 15", timeout=300)
+            revision_gate_check(changed_chapters())  # 削った後も同じゲートを通す
         else:
             step("apply_cuts.py not found, skipping mechanical cuts")
 
@@ -796,6 +841,33 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             # Run revision
             step(f"Revising Ch {ch_num} with brief {brief_file.name}...")
             uv_run(f"gen_revision.py {ch_num} {brief_file}", timeout=600)
+
+            # 本文を触ったので章ゲートを回す（FAIL なら修復 → それでも駄目なら元に戻す）
+            ch_file = CHAPTERS_DIR / f"ch_{ch_num:02d}.md"
+            gate_path = f"chapters/ch_{ch_num:02d}.md"
+            if REVISION_GATES and run_tool(gate_cmd_for(gate_path), timeout=300).returncode != 0:
+                step("  改訂版が章ゲートに落ちました — 修復を試します（落ちた箇所だけ直す）")
+                healed = False
+                if REPAIR_ON_FAIL and ch_file.exists():
+                    uv_run(f"repair_chapter.py {gate_path} "
+                           f"--out chapters/ch_{ch_num:02d}_repaired.md "
+                           f'--band "{CHAPTER_GATE_BAND}"', timeout=REPAIR_TIMEOUT)
+                    repaired = ch_file.with_name(f"ch_{ch_num:02d}_repaired.md")
+                    if repaired.exists():
+                        if run_tool(gate_cmd_for(f"chapters/ch_{ch_num:02d}_repaired.md"),
+                                    timeout=300).returncode == 0:
+                            run_tool(f"mv chapters/ch_{ch_num:02d}_repaired.md "
+                                     f"chapters/ch_{ch_num:02d}.md")
+                            healed = True
+                            step("  修復版がゲートを通過しました — 採用します")
+                        else:
+                            run_tool(f"rm -f chapters/ch_{ch_num:02d}_repaired.md")
+                if not healed:
+                    step("  修復しても通らないので、この改訂は元に戻します")
+                    run_tool(f"git checkout -- {gate_path}")
+                    log_result("reverted", f"rev-ch{ch_num:02d}", -1, 0, "discard",
+                               f"Cycle {cycle}: {question} 改訂版が章ゲートFAIL（元に戻した）")
+                    continue
 
             # Evaluate revised chapter
             post_eval = uv_run(f"evaluate.py --chapter={ch_num}", timeout=300)

@@ -54,6 +54,10 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 >     日本語で本文を引用した具体的な指摘、`gemma4:31b-cloud` は最速(7秒)だが writer 本人なので自己評価になる、
 >     `glm-5.3` は出力が壊れる（2回連続）。**同じ章でも実行ごとに点が最大1点動く**ので1回の比較で決めない。
 >     env `AUTONOVEL_JUDGE_MODEL`（推奨 `kimi-k3`）／`AUTONOVEL_REVIEW_MODEL`
+>   - **本文を触ったら全ゲート**：改訂フェーズ（`adversarial_edit.py` / `apply_cuts.py` / `gen_revision.py`）が章を書き換えた
+>     **直後**に、同じ章ゲート6項目を必ず通します。落ちた章は**元に戻し**（git checkout）、`gen_revision.py` の改訂は
+>     **修復→それでも通らなければ元に戻す**ので、改訂で文体が崩れたまま残ることがありません。
+>     env `AUTONOVEL_REVISION_GATES=0` で無効化（既定は有効）
 > - **サンプル小説データはリセット済み**：`seed.txt` を自分の種コンセプトに差し替えて開始します。
 >   種は `seed.py`（ゼロから生成）または `seed.py --riff "雑な着想"`（着想を展開）で作り、
 >   出力をそのまま `seed.txt` に貼ります（`seed.txt` は書式の見本も兼ねます）
