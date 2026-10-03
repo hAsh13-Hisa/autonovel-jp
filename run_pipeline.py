@@ -364,6 +364,139 @@ def run_foundation(state: dict) -> dict:
 # PHASE 2 — DRAFTING
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 試作1章テスト（設定が通った直後に、1章だけ書いて判定する）
+# ---------------------------------------------------------------------------
+# 目的: 24章を書き始める前に、設定（世界観・人物・アウトライン）の穴を見つける。
+#   1章だけ試作 → 章ゲート（落ちたら修復） → 判定スコア → 通れば第1章として採用し、
+#   2章以降を書き続ける。通らなければ数行のブリーフを残して止める（既定）。
+TRIAL_TEST = os.environ.get("AUTONOVEL_TRIAL_TEST", "1") != "0"
+TRIAL_STOP = os.environ.get("AUTONOVEL_TRIAL_STOP", "1") != "0"
+TRIAL_ONLY = os.environ.get("AUTONOVEL_TRIAL_ONLY", "0") != "0"
+TRIAL_BRIEF = BASE_DIR / os.environ.get(
+    "AUTONOVEL_TRIAL_BRIEF", "briefs/trial_chapter_brief.md")
+
+
+def _trial_fail(state: dict, ch_file: Path, gate_out: str,
+                repair_out: str, score: float, verdict: str) -> tuple:
+    """試作テストの不合格を数行のブリーフに残し、設定を直すために止める（既定）。"""
+    fail_lines = [l.strip() for l in gate_out.splitlines()
+                  if "[FAIL]" in l or "[WARN]" in l or l.strip().startswith("RESULT")]
+    fix_lines = [l.strip() for l in repair_out.splitlines() if l.strip().startswith("- ")]
+
+    body = [
+        "# 試作1章テスト：不合格",
+        "",
+        "設定（世界観・人物・アウトライン）が通った直後に、**1章だけ試作して判定**した結果です。",
+        "**24章を書き始める前に**、設計の穴を見つけるためのテストです。",
+        "",
+        f"- 判定: {verdict}",
+        f"- 判定スコア: {score}（合格ライン {CHAPTER_THRESHOLD}）",
+        f"- 試作した章: {ch_file}（読めるようにそのまま残してあります）",
+        "",
+        "## 章ゲート（文体6項目）の結果",
+        "",
+    ]
+    body += ([f"- {l}" for l in fail_lines] if fail_lines
+             else ["- （ゲートの出力を取得できませんでした）"])
+    body += ["", f"## 修復で直そうとした箇所（{len(fix_lines)}件）", ""]
+    body += ([f"- {l}" for l in fix_lines[:6]] if fix_lines
+             else ["- （修復は走っていません）"])
+    body += [
+        "",
+        "## 次にやること（設計側を直す）",
+        "",
+        "- `outline.md`: 幕構成と各章の事件（中盤に山、40〜60%地点で取り返しのつかない損失、対立面を終盤まで持続）",
+        "- `characters.md`: 主人公と対立する人物が、終盤まで働いているか",
+        "- `voice.md` / `style_exemplar.md`: 比喩の供給源と予算（型の反復を減らす）",
+        "- 直したら `AUTONOVEL_TRIAL_ONLY=1 uv run python run_pipeline.py --phase drafting` で再試行",
+        "  （1章だけ書いて判定。24章は書きません）",
+        "",
+    ]
+    TRIAL_BRIEF.parent.mkdir(parents=True, exist_ok=True)
+    TRIAL_BRIEF.write_text("\n".join(body), encoding="utf-8")
+
+    banner("試作1章テスト 不合格（設定を直してください）", "!")
+    print(f"  判定: {verdict}")
+    for l in fail_lines[:5]:
+        print(f"    {l}")
+    print(f"  詳しい結果: {TRIAL_BRIEF}")
+    print(f"  試作した章: {ch_file}")
+    if TRIAL_STOP:
+        print("  24章を書き始める前に止めます。設定（上のブリーフに書いたファイル）を直して再実行してください。")
+        print("  このまま続ける場合は AUTONOVEL_TRIAL_STOP=0 を付けて再実行します。")
+        save_state(state)
+        sys.exit(3)
+    print("  AUTONOVEL_TRIAL_STOP=0 なので記録だけして、2章以降を書きます。")
+    log_result("discarded", "ch01", score, 0, "discard", f"試作1章テスト不合格: {verdict}")
+    return False, verdict
+
+
+def trial_chapter_test(state: dict, total: int) -> tuple:
+    """設定の合格直後に1章だけ試作し、章ゲート（修復込み）と判定スコアで合否を出す。"""
+    if not TRIAL_TEST:
+        step("試作1章テストは無効（AUTONOVEL_TRIAL_TEST=0）")
+        return True, ""
+    if state.get("chapters_drafted", 0) >= 1:
+        step("すでに第1章があるので試作テストは省略します")
+        return True, ""
+
+    ch = 1
+    banner("試作1章テスト（第1章を1章だけ書いて判定）", "-")
+    CHAPTERS_DIR.mkdir(exist_ok=True)
+    ch_file = CHAPTERS_DIR / f"ch_{ch:02d}.md"
+
+    draft_result = uv_run(f"{DRAFTER} {ch}", timeout=DRAFT_TIMEOUT)
+    if draft_result.returncode != 0 or not ch_file.exists() or ch_file.stat().st_size < 100:
+        step(f"試作のドラフトに失敗しました（exit {draft_result.returncode}）")
+        return _trial_fail(state, ch_file, "", "", -1.0, "試作のドラフトに失敗")
+
+    gate_cmd = (f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
+                f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} ")
+    gate = run_tool(gate_cmd + f"chapters/ch_{ch:02d}.md", timeout=180)
+    repair_out, healed = "", False
+    if gate.returncode != 0:
+        if REPAIR_ON_FAIL:
+            step("章ゲートに落ちたので修復します（落ちた箇所だけを直す）")
+            rep = uv_run(f"repair_chapter.py chapters/ch_{ch:02d}.md "
+                         f"--out chapters/ch_{ch:02d}_repaired.md "
+                         f'--band "{CHAPTER_GATE_BAND}"', timeout=REPAIR_TIMEOUT)
+            repair_out = rep.stdout or ""
+            repaired = ch_file.with_name(f"ch_{ch:02d}_repaired.md")
+            if repaired.exists():
+                gate2 = run_tool(gate_cmd + f"chapters/ch_{ch:02d}_repaired.md", timeout=180)
+                if gate2.returncode == 0:
+                    run_tool(f"mv chapters/ch_{ch:02d}_repaired.md chapters/ch_{ch:02d}.md")
+                    healed, gate = True, gate2
+                    step("修復版がゲートを通過しました — 採用します")
+                else:
+                    run_tool(f"rm -f chapters/ch_{ch:02d}_repaired.md")
+        else:
+            step("修復は無効（AUTONOVEL_REPAIR_ON_FAIL=0）なので、そのまま判定します")
+    gates_ok = healed or gate.returncode == 0
+
+    score = -1.0
+    for _ in range(3):
+        ev = uv_run(f"evaluate.py --chapter={ch}", timeout=300)
+        score = parse_score(ev.stdout, "overall_score")
+        if score >= 0:
+            break
+    score_ok = score >= CHAPTER_THRESHOLD
+
+    if gates_ok and score_ok:
+        word_count = len(ch_file.read_text(encoding="utf-8"))
+        commit_hash = git_add_commit(f"ch01 (試作テスト通過): score {score}, {word_count}字")
+        log_result(commit_hash, "ch01", score, word_count, "keep", "試作1章テスト通過")
+        state["chapters_drafted"] = 1
+        save_state(state)
+        step(f"試作1章テスト 通過（score {score}）— この章を第1章として採用し、2章以降を書きます")
+        return True, ""
+
+    verdict = ("章ゲートで不合格" if not gates_ok
+               else f"章ゲートは通ったが判定スコアが低い（{score}）")
+    return _trial_fail(state, ch_file, gate.stdout or "", repair_out, score, verdict)
+
+
 def run_drafting(state: dict) -> dict:
     """
     Draft each chapter sequentially, evaluating and retrying as needed.
@@ -371,6 +504,10 @@ def run_drafting(state: dict) -> dict:
     banner("PHASE 2: DRAFTING", "=")
 
     total = get_total_chapters(state)
+    trial_chapter_test(state, total)          # 設定の合格直後に1章だけ試作して判定する
+    if TRIAL_ONLY:
+        step("試作1章テストだけを実行しました（AUTONOVEL_TRIAL_ONLY=1）")
+        return state
     start_chapter = state.get("chapters_drafted", 0) + 1
 
     CHAPTERS_DIR.mkdir(exist_ok=True)

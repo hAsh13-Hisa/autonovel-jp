@@ -41,6 +41,12 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 >     生原稿は落ちるのが普通）→ env `AUTONOVEL_GATE_WARN_ITEMS` で切替（手動の完成稿検査は未指定＝全項目合否）
 >   - ドラフトは fork 推奨の分割ドラフター（`draft_chapter_split.py`）が既定。env `AUTONOVEL_DRAFTER` で
 >     本家の `draft_chapter_beat.py` に戻せる（分割ドラフターは長時間なので `AUTONOVEL_DRAFT_TIMEOUT` も調整可）
+>   - **試作1章テスト（設定の合格直後）**：24章を書き始める前に**1章だけ試作**して判定します
+>     （章ゲート → 落ちたら修復 → もう一度ゲート → 判定スコア）。通ればその章を**第1章として採用**して2章以降へ、
+>     通らなければ `briefs/trial_chapter_brief.md` に数行のブリーフ（落ちた項目・修復で直した箇所・
+>     次に直すファイル）を残して**止まります**。人間が見るのはこのときだけ。
+>     env `AUTONOVEL_TRIAL_TEST=0` で無効化、`AUTONOVEL_TRIAL_STOP=0` で止めずに記録だけして続行、
+>     `AUTONOVEL_TRIAL_ONLY=1` で試作テストだけ実行（`run_pipeline.py --phase drafting` と併用。設定を直したあとの再試行用）
 > - **サンプル小説データはリセット済み**：`seed.txt` を自分の種コンセプトに差し替えて開始します。
 >   種は `seed.py`（ゼロから生成）または `seed.py --riff "雑な着想"`（着想を展開）で作り、
 >   出力をそのまま `seed.txt` に貼ります（`seed.txt` は書式の見本も兼ねます）
