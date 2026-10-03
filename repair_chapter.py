@@ -251,7 +251,13 @@ DIALOGUE_PROMPT = """次の地の文の段落は、会話が少なく読者が�
 
 条件:
 - 登場人物はこの抜粋に出ている人物だけ。新しい人物・新しい事実・新しい展開を足さない
-- 会話は2〜3往復。地の文は最小限のト書きだけ
+- 会話は2〜3往復。**誰が話しているかを、最初のセリフより前に地の文（ト書き）で必ず書く**
+  （例: 「〇〇が月を見たまま言った。」のように、話し手の名前か立場を出す）
+- 二人目も応答の前に分かるようにする（名前、または「女房」「傍らの男」など抜粋での呼び方）。
+  **誰が言ったか分からないセリフを1つも残さない**
+- 話し手は交互にする（同じ人物の連続は1回まで）。独り言にしない
+- 名前はこの抜粋に出てくる呼び方のまま使う（新しい名前・新しい呼び方は作らない）
+- 地の文は最小限のト書きだけ（情景描写を増やさない）
 - 文体・人称・語尾はこの抜粋に合わせる
 - 長さは元の0.8〜1.2倍（長さを保つと、他の区画の区切りが崩れない）
 - 書き換えた段落だけを返す（前後の地の文は書かない）
@@ -324,15 +330,21 @@ def insert_dialogue(text: str, log: list) -> str:
         return text
     cand = text[:at] + new + text[at + len(target):]
     before_min, after_min = min_window_ratio(text), min_window_ratio(cand)
-    got = block_ratios(_body(cand))
-    got = got[idx] if idx < len(got) else 0.0
-    if got <= r or after_min < before_min:
+    b_blocks, a_blocks = block_ratios(_body(text)), block_ratios(_body(cand))
+    got = a_blocks[idx] if idx < len(a_blocks) else 0.0
+    # 合格は「悪化していない」こと: 全体の最小が下がらない・薄い区画（下限55%）が増えない・
+    # 会話の量（区画の比率の和）が増える＝地の文を会話にした分が効いている。
+    thin_b = sum(1 for x in b_blocks if x < 0.55)
+    thin_a = sum(1 for x in a_blocks if x < 0.55)
+    if after_min < before_min or thin_a > thin_b or sum(a_blocks) <= sum(b_blocks):
         log.append(f"会話に置き換えても改善しないので見送り"
                    f"（対象の区画 {r * 100:.0f}%→{got * 100:.0f}% / "
-                   f"全体の最小 {before_min * 100:.0f}%→{after_min * 100:.0f}%）: {new[:60]}…")
+                   f"全体の最小 {before_min * 100:.0f}%→{after_min * 100:.0f}% / "
+                   f"薄い区画 {thin_b}→{thin_a} / 会話の量 {sum(b_blocks):.1f}→{sum(a_blocks):.1f}）: {new[:60]}…")
         return text
     log.append(f"地の文を会話に置き換え（対象の区画 {r * 100:.0f}%→{got * 100:.0f}%、"
-               f"全体の最小 {before_min * 100:.0f}%→{after_min * 100:.0f}%）: {new[:100]}…")
+               f"全体の最小 {before_min * 100:.0f}%→{after_min * 100:.0f}%、"
+               f"薄い区画 {thin_b}→{thin_a}）: {new[:100]}…")
     return cand
 
 
