@@ -13,8 +13,9 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 
 1. **「このリポジトリをcloneして、autonovelパイプラインをセットアップして」**
    → クローン、`uv sync`、`.env` 雛形作成までエージェントが実行します
-2. **「seed.txtの企画書を一緒に考えたい」**
-   → 世界観・キャラクター・章構成を対話しながら共同執筆（書式雛形は `seed.txt`）
+2. **「種コンセプトを一緒に考えたい」**
+   → `seed.py`（ゼロから10案）または `seed.py --riff "<雑な着想>"`（着想を5案に展開）をエージェントが実行し、
+   選んだ案を `seed.txt` に書き込みます（書式の正本は `seed.txt`）
 3. **「第一章から執筆を始めて」**
    → 以降の執筆→品質ゲート→リジェクト時の再構成までエージェントが回します
 
@@ -33,7 +34,14 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 >   - セリフ比率は**行数ではなく文字数ベース**で測定（セリフ7：地文3）
 >   - 章の文字数ゲート、`——`/`……`の使用上限、読点スタッカート検出、定型AI表現の減点
 >   - `style_exemplar.md`（文体アンカー）を毎章のプロンプトに注入して文体ドリフトを防止
-> - **サンプル小説データはリセット済み**：`seed.txt` に自分の企画書を書いて開始します
+> - **サンプル小説データはリセット済み**：`seed.txt` を自分の種コンセプトに差し替えて開始します。
+>   種は `seed.py`（ゼロから生成）または `seed.py --riff "雑な着想"`（着想を展開）で作り、
+>   出力をそのまま `seed.txt` に貼ります（`seed.txt` は書式の見本も兼ねます）
+> - **seed.txt の書式を拡張**：`登場人物` `ストーリー構成` に加え、
+>   `各幕の事件`（幕ごとの具体的な事件。第2幕後に「取り返しのつかない損失」を1つ）と
+>   `章末フックの型`（3種）を追加。`seed.py` の出力もこの書式です
+> - **アウトライン生成に退屈防止の必須事項**：`gen_outline.py` / `gen_outline_part2.py` に
+>   「40〜60%地点の取り返しのつかない損失」「対立面を第II幕末まで持続」「各章末に次をめくる理由」を追加
 
 ### 本家のまま・未使用の部分（注記）
 
@@ -61,7 +69,10 @@ cp .env.example .env    # エンドポイントとモデルを編集
 
 uv sync
 
-# seed.txt に企画書を書く（同梱の seed.txt は書式サンプル。自分のものに差し替えてください）
+# 種コンセプトを作る（既定ルート。出力をそのまま seed.txt に貼る）
+uv run python seed.py
+# すでに着想がある場合は、それを展開させる
+uv run python seed.py --riff "平安の才媛が鏡の世界へ行く話"
 
 # パイプライン実行
 uv run python run_pipeline.py --from-scratch
@@ -81,7 +92,7 @@ AUTONOVEL_WRITER_MODEL=deepseek-v4.1-flash
 
 # 混在（執筆はクラウド、評価はローカル）
 AUTONOVEL_JUDGE_BASE_URL=http://localhost:11434/v1
-AUTONOVEL_JUDGE_MODEL=qwen3.8:latest
+AUTONOVEL_JUDGE_MODEL=qwen3.8-fast:latest   # 旧 qwen3.8:latest は 2026-09-30 に削除
 ```
 
 組み合わせの例は [.env.example](.env.example) にまとまっています。
@@ -177,7 +188,7 @@ FRAMEWORK (reusable):
   WORKFLOW.md            — Step-by-step human guide
 
 PER-NOVEL (regenerated from seed.txt):
-  seed.txt               — 企画書（唯一の入力。書式サンプル同梱）
+  seed.txt               — 種コンセプト（唯一の入力。書式の見本を兼ねる。seed.py の出力を貼る）
   voice.md               — Part 1: guardrails. Part 2: discovered per novel
   world.md / characters.md / outline.md / canon.md / MYSTERY.md
   style_exemplar.md      — 文体アンカー（承認章の良い部分を貼り、全章に注入）
