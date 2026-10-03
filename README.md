@@ -169,6 +169,7 @@ LaTeX組版、表紙アート、オーディオブック台本、ePub、ラン�
 | `review.py` | Dual-persona review with stopping conditions |
 | `verify_chapter_gates.py` | **章ゲート6項目**（文字数／セリフ比／最小窓／重複／……・——・英語／比喩の型）。`run_pipeline.py` の drafting が呼び、FAIL の章は破棄→書き直し |
 | `dialogue_ratio.py` | 章の計測（文字ベースのセリフ比・重複文・台詞の長さ）。`verify_chapter_gates.py` が読み取る |
+| `repair_chapter.py` | **落ちた章を直す修復パス（破棄しない）**。機械で直せる欠陥（重複文・記号）はコードで、意味が要る欠陥（比喩の言い換え・会話が薄い窓への会話追加）はLLMにその箇所だけ直させ、章ゲートを回し直して前後を比較する。改善しなければ元に戻す。元ファイルは上書きしない |
 
 ### Revision
 | Tool | Purpose |
