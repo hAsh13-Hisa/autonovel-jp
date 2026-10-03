@@ -67,6 +67,17 @@ def _resolve(role: str):
     return model, base.rstrip("/"), key
 
 
+# 評価役（judge/review）の回答言語: 作品は日本語なので、指摘・理由も日本語で書かせる。
+# 生成側（gen_*.py / draft_*.py）は既に「出力は必ず日本語で書いてください」を持っているが、
+# 評価側は英語のままだった（2026-10-03 Hisa指摘: 「日本語指定しながら英語で返って来たなら切り捨ててよい」）。
+# JSONのキーだけ英語のままにする。
+JUDGE_LANGUAGE_NOTE = (
+    "The novel under review is written in JAPANESE. Write **every value** in the JSON "
+    "(gap / fix / note / reasons / weakest_dimension / top_3_improvements / free text) "
+    "in JAPANESE. Keep only the JSON keys in English. Never answer in English."
+)
+
+
 def call(
     role: str,
     prompt: str,
@@ -87,6 +98,9 @@ def call(
     model, base, key = _resolve(role)
     if temperature is None:
         temperature = ROLE_TEMPERATURE.get(role, 0.7)
+
+    if role in ("judge", "review"):
+        system = f"{system}\n{JUDGE_LANGUAGE_NOTE}".strip() if system else JUDGE_LANGUAGE_NOTE
 
     headers = {"Content-Type": "application/json"}
     if key:
