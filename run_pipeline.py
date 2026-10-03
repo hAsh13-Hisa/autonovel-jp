@@ -44,6 +44,11 @@ MIN_REVISION_CYCLES = 3
 MAX_REVISION_CYCLES = 6
 PLATEAU_DELTA = 0.3
 
+# 章ゲート（verify_chapter_gates.py）の文字数帯。
+# 自律実行では上限を見ない（初稿は下限だけ強制する。改稿・挿入で章は伸びるため）。
+# 帯を変えたいときは env AUTONOVEL_CHAPTER_GATE_BAND="6000 99999" のように上書きする。
+CHAPTER_GATE_BAND = os.environ.get("AUTONOVEL_CHAPTER_GATE_BAND", "3000 99999")
+
 PHASE_ORDER = ["foundation", "drafting", "revision", "export"]
 
 
@@ -388,6 +393,23 @@ def run_drafting(state: dict) -> dict:
                          "この章に未定義キャラが登場しています。破棄して再試行します。")
                     log_result("discarded", f"ch{ch:02d}", score, word_count,
                                "discard", f"Chapter {ch}: character consistency FAILED")
+                    if ch_file.exists():
+                        run_tool(f"git checkout -- chapters/ch_{ch:02d}.md 2>/dev/null || true")
+                    continue
+                # Chapter quality gates — 文体6項目（文字数/セリフ比/最小窓/重複/記号/比喩の型）
+                # FAIL なら破棄して次の attempt で書き直す（2026-10-03 接続）
+                gate = uv_run(
+                    f"verify_chapter_gates.py --band {CHAPTER_GATE_BAND} "
+                    f"chapters/ch_{ch:02d}.md",
+                    timeout=180)
+                if gate.returncode != 0:
+                    step("WARNING: chapter quality gates FAILED — 文体ゲートに不合格"
+                         "（セリフ比・最小窓・重複・記号・比喩の型）。破棄して再試行します。")
+                    for line in (gate.stdout or "").splitlines():
+                        if "[FAIL]" in line or line.startswith("RESULT"):
+                            print(f"      {line.strip()}")
+                    log_result("discarded", f"ch{ch:02d}", score, word_count,
+                               "discard", f"Chapter {ch}: quality gates FAILED")
                     if ch_file.exists():
                         run_tool(f"git checkout -- chapters/ch_{ch:02d}.md 2>/dev/null || true")
                     continue
