@@ -711,6 +711,9 @@ def parse_panel_consensus(panel_path: Path) -> list[dict]:
 
 
 REVISION_GATES = os.environ.get("AUTONOVEL_REVISION_GATES", "1") != "0"
+# 整合ゲート（消えた人物・設定矛盾・声の逸脱・伏線の放置）。0 で無効化。
+CONSISTENCY = os.environ.get("AUTONOVEL_CONSISTENCY", "1") != "0"
+CONSISTENCY_TIMEOUT = int(os.environ.get("AUTONOVEL_CONSISTENCY_TIMEOUT", "900"))
 
 
 def gate_cmd_for(path: str) -> str:
@@ -768,6 +771,14 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
 
     for cycle in range(start_cycle, max_cycles + 1):
         banner(f"Revision Cycle {cycle}/{max_cycles}", "-")
+
+        # -- Step 0: 整合ゲート（機械・無料）: 消えた人物などを記録 --
+        if CONSISTENCY:
+            step("Running consistency gate (mechanical)...")
+            cons_report = EDIT_LOGS_DIR / f"consistency_report_cycle{cycle}.md"
+            uv_run(f"verify_consistency.py --report {cons_report}", timeout=300)
+            log_result("consistency", f"cycle{cycle}", "", 0, "note",
+                       f"整合ゲート（機械）の結果: {cons_report.name}")
 
         # -- Step 1: Adversarial editing pass --
         step("Running adversarial editing on all chapters...")
@@ -840,6 +851,23 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
 
             # Run revision
             step(f"Revising Ch {ch_num} with brief {brief_file.name}...")
+
+            # 整合の指摘（設定矛盾・声の逸脱・伏線の放置）も同じブリーフに足す。
+            # 審査は judge モデルで1章1回（約1分半）。指摘が無ければ何も足さない。
+            if CONSISTENCY:
+                step(f"Checking consistency of Ch {ch_num} (judge model)...")
+                cons_brief = BRIEFS_DIR / f"ch{ch_num:02d}_cycle{cycle}_consistency.md"
+                uv_run(f"verify_consistency.py --llm --chapters {ch_num} "
+                       f"--brief {cons_brief}", timeout=CONSISTENCY_TIMEOUT)
+                try:
+                    extra = cons_brief.read_text(encoding="utf-8").strip()
+                except OSError:
+                    extra = ""
+                if extra:
+                    with open(brief_file, "a", encoding="utf-8") as fh:
+                        fh.write("\n\n" + extra + "\n")
+                    step(f"  整合の指摘をブリーフに足しました（{len(extra)}字）")
+
             uv_run(f"gen_revision.py {ch_num} {brief_file}", timeout=600)
 
             # 本文を触ったので章ゲートを回す（FAIL なら修復 → それでも駄目なら元に戻す）
