@@ -7,6 +7,8 @@ Hisa 品質ルール（2026-09-15改定。旧=2026-08-31運用ゲート）をま
   比喩の型の反復（2026-10-03追加）:
     比喩密度 (まるで+よう系+みたい+あたかも+ごとく)/1000字 <= 3.0
     同型の反復 まるで+みたい <= 4
+  括弧の対応（2026-10-04追加）:
+    「」『』（）の過不足 = 0（修復パスが「」を閉じ忘れる事故を実測で確認したため）
 
 全項目が合否対象（FAIL があれば exit 1）。run_pipeline.py の drafting が本スクリプトを
 呼び、FAIL の章は破棄して書き直す（＝自動再生成）。
@@ -160,6 +162,15 @@ def main() -> int:
         emit("metaphor", "比喩密度",
              f"{mk_density:.1f}/1000字 (<=3.0)・まるで+みたい={mk_same} (<=4) — 内訳 {detail}",
              mk_density <= 3.0 and mk_same <= 4)
+        # --- 括弧の対応（2026-10-04 追加）---
+        # 修復パス（会話の置き換え）が「」を閉じ忘れる事故を実測で確認したため追加。
+        # 完成稿24章は ずれ 0/24（誤検出なし）、壊れた修復版は 9個の不足で検出できた。
+        br = {"「」": text.count("「") - text.count("」"),
+              "『』": text.count("『") - text.count("』"),
+              "（）": text.count("（") - text.count("）")}
+        br_detail = " ".join(f"{k}{v:+d}" for k, v in br.items() if v) or "対応OK"
+        emit("brackets", "括弧の対応(「」『』（）の過不足)", f"{br_detail} (=0)",
+             all(v == 0 for v in br.values()))
     print()
     if warned:
         print(f"（警告のみで通過: {', '.join(sorted(warned))}）")

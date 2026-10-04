@@ -82,6 +82,12 @@ def measure(text: str, lo: int, hi: int) -> dict:
         "symbols_ok": text.count("……") <= 2 and text.count("——") <= 1,
         "english": len(re.findall(r"[A-Za-z]{4,}", text)),
         "english_ok": len(re.findall(r"[A-Za-z]{4,}", text)) == 0,
+        "brackets": {"「」": text.count("「") - text.count("」"),
+                     "『』": text.count("『") - text.count("』"),
+                     "（）": text.count("（") - text.count("）")},
+        "brackets_ok": (text.count("「") == text.count("」")
+                        and text.count("『") == text.count("』")
+                        and text.count("（") == text.count("）")),
         "metaphor": mk,
         "metaphor_density": (mk_total / (chars / 1000)) if chars else 0.0,
         "metaphor_same": mk["まるで"] + mk["みたい"],
@@ -92,7 +98,13 @@ def measure(text: str, lo: int, hi: int) -> dict:
 
 def all_ok(m: dict) -> bool:
     return all(m[k] for k in ("chars_ok", "ratio_ok", "min_window_ok",
-                              "dup_ok", "symbols_ok", "english_ok", "metaphor_ok"))
+                              "dup_ok", "symbols_ok", "english_ok", "metaphor_ok",
+                              "brackets_ok"))
+
+
+def brackets_detail(m: dict) -> str:
+    """括弧の過不足を1行で表す（show 用）。"""
+    return " ".join(f"{k}{v:+d}" for k, v in m["brackets"].items() if v) or "対応OK"
 
 
 def show(label: str, m: dict) -> None:
@@ -103,7 +115,8 @@ def show(label: str, m: dict) -> None:
           f"記号 ……{m['dots']}——{m['dash']}{'' if m['symbols_ok'] else '✗'} / "
           f"英語 {m['english']}{'' if m['english_ok'] else '✗'} / "
           f"比喩 {m['metaphor_density']:.1f}{'' if m['metaphor_ok'] else '✗'}"
-          f"（まるで+みたい={m['metaphor_same']}）")
+          f"（まるで+みたい={m['metaphor_same']}）/ "
+          f"括弧 {brackets_detail(m)}{'' if m['brackets_ok'] else '✗'}")
 
 
 # --------------------------------------------------------------------- 機械修復
@@ -148,6 +161,50 @@ def cut_symbols(text: str, log: list) -> str:
         out.append(text[i])
         i += 1
     return "".join(out)
+
+
+def fix_brackets(text: str, log: list) -> str:
+    """「」『』（）の過不足を直す（会話の閉じ忘れを1行ずつ直す）。
+
+    修復パス（会話の置き換え）が「」を閉じ忘れる事故を実測で確認したため追加（2026-10-04）。
+    実測: 生原稿は「」75/75 で対応していたのに、修復版は 70/61（9個の閉じ忘れ）になっていた。
+    行ごとに開きが多い行は行末に閉じを足し、閉じが余る行は余分な閉じを外す。
+    行内で解決できない不足が残った場合は、章末で帳尻を合わせず（誤修復を避けて）記録だけ残す。
+    """
+    pairs = (("「", "」"), ("『", "』"), ("（", "）"))
+    lines = text.split("\n")
+    fixed = 0
+    for idx, line in enumerate(lines):
+        if not line.strip():
+            continue
+        for open_c, close_c in pairs:
+            diff = line.count(open_c) - line.count(close_c)
+            if diff > 0:
+                lines[idx] = line + close_c * diff
+                line = lines[idx]
+                fixed += diff
+                log.append(f"{idx + 1}行目: {open_c}{close_c} の閉じ忘れ {diff}個 を補った")
+            elif diff < 0:
+                new = line
+                cut = 0
+                for _ in range(-diff):
+                    pos = new.rfind(close_c)
+                    if pos <= 0:
+                        break
+                    new = new[:pos] + new[pos + 1:]
+                    cut += 1
+                if cut:
+                    lines[idx] = new
+                    line = new
+                    fixed += cut
+                    log.append(f"{idx + 1}行目: 余分な {close_c} を {cut}個 外した")
+    out = "\n".join(lines)
+    left = {f"{a}{b}": out.count(a) - out.count(b) for a, b in pairs}
+    if any(left.values()):
+        log.append(f"括弧の対応が章全体で残った（機械では直さない）: {left}")
+    if fixed:
+        log.append(f"括弧の修正は合計 {fixed}箇所")
+    return out
 
 
 # --------------------------------------------------------------------- LLM修復
@@ -406,6 +463,7 @@ def main() -> int:
         print(f"\n-- 修復ラウンド {rnd}/{args.max_rounds} -- 種類: {', '.join(sorted(kinds))}")
         if "symbol" in kinds:
             cur = cut_symbols(cur, log)
+            cur = fix_brackets(cur, log)
         if "dup" in kinds:
             cur = drop_dup_sentences(cur, log)
         if "metaphor" in kinds and not measure(cur, lo, hi)["metaphor_ok"]:

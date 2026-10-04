@@ -714,6 +714,9 @@ REVISION_GATES = os.environ.get("AUTONOVEL_REVISION_GATES", "1") != "0"
 # 整合ゲート（消えた人物・設定矛盾・声の逸脱・伏線の放置）。0 で無効化。
 CONSISTENCY = os.environ.get("AUTONOVEL_CONSISTENCY", "1") != "0"
 CONSISTENCY_TIMEOUT = int(os.environ.get("AUTONOVEL_CONSISTENCY_TIMEOUT", "900"))
+# 一対比較（Elo）で章の採否を決める。点が下がった改訂を、両順序で勝てば採用する。
+ELO_DECIDE = os.environ.get("AUTONOVEL_ELO_DECIDE", "1") != "0"
+ELO_TIMEOUT = int(os.environ.get("AUTONOVEL_ELO_TIMEOUT", "600"))
 
 
 def gate_cmd_for(path: str) -> str:
@@ -751,6 +754,34 @@ def revision_gate_check(changed: list) -> int:
                    "改訂で本文を触ったら章ゲートFAIL（元に戻した）")
         reverted += 1
     return reverted
+
+
+def pairwise_verdict(ch_num: int, gate_path: str, cycle: int) -> tuple:
+    """点が下がった改訂を、一対比較（Elo）で救うかどうかを決める。
+
+    絶対点は実行ごとに最大1点動く（実測 2026-10-03）。「点が下がったから捨てる」と
+    良い改訂を捨ててしまうので、旧版（git HEAD）と新版を**両方の順序で**比べさせ、
+    両方で新版が勝ったときだけ採用する。順序で答えが変わる場合は現状維持。
+    戻り値: ("adopt" | "keep", 理由)
+    """
+    tmp_old = EDIT_LOGS_DIR / f"ch{ch_num:02d}_cycle{cycle}_head.md"
+    verdict_file = EDIT_LOGS_DIR / f"ch{ch_num:02d}_cycle{cycle}_verdict.txt"
+    run_tool(f"git show HEAD:{gate_path} > {tmp_old}")
+    if not tmp_old.exists() or not tmp_old.read_text(encoding="utf-8").strip():
+        return "keep", "旧版を取り出せなかった（点が下がったので不採用）"
+    uv_run(f"compare_versions.py --a {tmp_old} --b {gate_path} --chapter {ch_num} "
+           f"--label-a ch{ch_num:02d}@HEAD --label-b ch{ch_num:02d}@revised "
+           f"--ratings {EDIT_LOGS_DIR}/elo.tsv --verdict-file {verdict_file}",
+           timeout=ELO_TIMEOUT)
+    try:
+        verdict = verdict_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        verdict = ""
+    if verdict == "adopt":
+        return "adopt", "一対比較で新版が勝った（点は下がったが採用）"
+    if verdict == "keep":
+        return "keep", "一対比較でも旧版が勝った"
+    return "keep", "一対比較は引き分け（順序で変わるため現状維持）"
 
 
 def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
@@ -906,19 +937,30 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
 
             step(f"Ch {ch_num}: {pre_score} -> {post_score}")
 
+            # 採否の決定。絶対点（overall_score）は実行ごとに最大1点動く（実測 2026-10-03）。
+            # 点が下がっただけでは捨てず、旧版と新版を一対比較にかける（両順序で勝てば採用）。
+            verdict, why = "keep", f"regressed {pre_score}->{post_score}"
             if post_score >= pre_score:
+                verdict, why = "adopt", f"improved {pre_score}->{post_score}"
+            elif ELO_DECIDE:
+                step(f"  点は下がりました（{pre_score} → {post_score}）。"
+                     "旧版と新版を一対比較で比べます（両順序で勝ったときだけ採用）")
+                verdict, why = pairwise_verdict(ch_num, gate_path, cycle)
+                step(f"  一対比較の判定: {verdict}（{why}）")
+
+            if verdict == "adopt":
                 commit_hash = git_add_commit(
-                    f"revision cycle {cycle}: ch{ch_num:02d} "
-                    f"{question} {pre_score}->{post_score}")
+                    f"revision cycle {cycle}: ch{ch_num:02d} {question} {why}")
                 log_result(commit_hash, f"rev-ch{ch_num:02d}", post_score,
                            word_count, "keep",
-                           f"Cycle {cycle}: {question} improved {pre_score}->{post_score}")
+                           f"Cycle {cycle}: {question} {why}")
             else:
-                step(f"Revision made it worse ({post_score} < {pre_score}), reverting")
+                step(f"Revision made it worse and lost the pairwise "
+                     f"({post_score} < {pre_score}), reverting")
                 git_reset_hard("HEAD")
                 log_result("reverted", f"rev-ch{ch_num:02d}", post_score,
                            word_count, "discard",
-                           f"Cycle {cycle}: {question} regressed {pre_score}->{post_score}")
+                           f"Cycle {cycle}: {question} {why}")
 
         # -- Step 6: Full novel evaluation --
         step("Running full novel evaluation...")
