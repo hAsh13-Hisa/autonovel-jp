@@ -852,7 +852,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         # （章ゲート→修復→判定→一対比較の安全網はそのまま効く）。
         if STRENGTH:
             step("Transplanting what works (best scenes → weak chapters)...")
-            uv_run(f"strength_transplant.py --patterns --briefs "
+            uv_run(f"strength_transplant.py --patterns --briefs --lens both "
                    f"--max-briefs {STRENGTH_MAX_BRIEFS} --cycle {cycle} "
                    f"--out-dir {BRIEFS_DIR}", timeout=STRENGTH_TIMEOUT)
             for sf in sorted(BRIEFS_DIR.glob(f"ch*_cycle{cycle}_strength.md")):

@@ -72,6 +72,32 @@ BRIEF_SYSTEM = (
     "移植する具体的な指示を書きます。あらすじ・文体・伏線は変えません。JSONのみで答えます。"
 )
 
+PROSE_SYSTEM = (
+    "あなたは日本語小説の校正者です。うまくいっている場面の引用を読み、"
+    "そこに共通して効いている**文章の作り方**（文の長さ・運び、語の選び方、間の取り方、"
+    "情報の出し方）だけを「型」として言語化します。"
+    "人物・筋・設定には触れません。抽象論や一般論は書かず、本文に即します。JSONのみで答えます。"
+)
+
+PROSE_PROMPT = """次は、読者役の審査で「うまくいっている」と挙げられた場面の引用です。
+
+{quotes}
+
+# してほしいこと
+これらの場面の**文章そのもの**（＝どう書いているか）に共通して効いている型を、最大5つ挙げてください。
+- 対象: 文の長さと運び／体言止めや倒置の使い方／情報を伏せる順番／会話と地の文の継ぎ方／
+  語の選び方（抽象語か具体物か）／間（ま）の取り方。
+- 対象外: 人物・関係・筋・設定・伏線の話は書かないでください。
+- 「感情を丁寧に描く」のような一般論は書かないでください。この本文の書き方に即してください。
+- 各型に、上の引用から短い例を添えてください。
+
+書き方（厳守）:
+- JSON 以外は何も書かない。
+- name は15字以内。what は60字以内。example は40字以内（引用そのまま）。
+
+出力例: {{"patterns": [{{"name": "短い型の名前", "what": "どう書くのか", "example": "本文からの短い引用"}}]}}
+"""
+
 BRIEF_PROMPT = """次の章に、別の章で効いていた「型」を移植したい。
 
 # 移植できる型
@@ -181,21 +207,36 @@ def _llm(prompt: str, system: str, max_tokens: int = 12000) -> dict:
         return {}
 
 
-def make_patterns(quotes: list) -> list:
-    body = "\n".join(f"- {q}" for q in quotes[:12])
-    data = _llm(PATTERNS_PROMPT.format(quotes=body), PATTERNS_SYSTEM)
+def _norm_patterns(data: dict, lens: str) -> list:
     out = []
     for p in (data.get("patterns") or []):
         if isinstance(p, dict) and p.get("name"):
             out.append({"name": str(p["name"])[:30],
                         "what": str(p.get("what", ""))[:120],
-                        "example": str(p.get("example", ""))[:80]})
+                        "example": str(p.get("example", ""))[:80],
+                        "lens": lens})
+    return out
+
+
+def make_patterns(quotes: list, lens: str = "both") -> list:
+    """効いている型を言語化する。lens=structure（仕掛け）／prose（文章）／both。"""
+    body = "\n".join(f"- {q}" for q in quotes[:12])
+    out = []
+    if lens in ("structure", "both"):
+        out += _norm_patterns(_llm(PATTERNS_PROMPT.format(quotes=body), PATTERNS_SYSTEM),
+                              "structure")
+    if lens in ("prose", "both"):
+        out += _norm_patterns(_llm(PROSE_PROMPT.format(quotes=body), PROSE_SYSTEM), "prose")
     return out
 
 
 def make_brief(ch: int, text: str, patterns: list) -> dict:
-    body = "\n".join(
-        f"- {p['name']}: {p['what']}（例「{p['example']}」）" for p in patterns)
+    def line(p):
+        lens = {"structure": "仕掛け", "prose": "文章"}.get(p.get("lens", ""), "")
+        head = f"[{lens}] " if lens else ""
+        return f"- {head}{p['name']}: {p['what']}（例「{p['example']}」）"
+
+    body = "\n".join(line(p) for p in patterns)
     return _llm(BRIEF_PROMPT.format(patterns=body, ch=ch, text=text[:6000]),
                 BRIEF_SYSTEM)
 
@@ -220,7 +261,9 @@ def brief_markdown(ch: int, brief: dict, patterns: list) -> str:
         lines.append(f"- なぜ: {brief['why']}")
     lines += ["", "## 参考: 型の一覧", ""]
     for p in patterns:
-        lines.append(f"- {p['name']}: {p['what']}（例「{p['example']}」）")
+        lens = {"structure": "仕掛け", "prose": "文章"}.get(p.get("lens", ""), "")
+        head = f"[{lens}] " if lens else ""
+        lines.append(f"- {head}{p['name']}: {p['what']}（例「{p['example']}」）")
     return "\n".join(lines) + "\n"
 
 
@@ -233,6 +276,9 @@ def main() -> int:
     ap.add_argument("--patterns", action="store_true", help="効いている型を言語化する")
     ap.add_argument("--briefs", action="store_true", help="対象章の移植ブリーフを作る")
     ap.add_argument("--chapters", default="", help="対象章（例 3,16）。既定はパネルの弱い章")
+    ap.add_argument("--lens", default="both",
+                    choices=["structure", "prose", "both"],
+                    help="型をどの観点で言語化するか（仕掛け／文章／両方）")
     ap.add_argument("--max-briefs", type=int, default=2, help="1回に作るブリーフの上限")
     ap.add_argument("--cycle", type=int, default=1, help="改訂サイクル番号（ファイル名に使う）")
     ap.add_argument("--out-dir", default="briefs", help="ブリーフの置き場")
@@ -255,16 +301,21 @@ def main() -> int:
         patterns_path = repo / patterns_path
     patterns = []
     if args.patterns or not Path(f"{patterns_path}.json").exists():
-        patterns = make_patterns(quotes)
+        patterns = make_patterns(quotes, args.lens)
         if patterns:
             patterns_path.parent.mkdir(parents=True, exist_ok=True)
             Path(f"{patterns_path}.json").write_text(
                 json.dumps({"patterns": patterns, "source": str(panel)},
                            ensure_ascii=False, indent=1), encoding="utf-8")
             md = ["# 効いている型（自動生成）", "", f"材料: {panel}", ""]
-            for p in patterns:
-                md += [f"## {p['name']}", f"- 何が効くか: {p['what']}",
-                       f"- 例: 「{p['example']}」", ""]
+            for lens_key, lens_label in (("structure", "仕掛けの型"), ("prose", "文章の型")):
+                group = [p for p in patterns if p.get("lens") == lens_key]
+                if not group:
+                    continue
+                md += [f"# {lens_label}", ""]
+                for p in group:
+                    md += [f"## {p['name']}", f"- 何が効くか: {p['what']}",
+                           f"- 例: 「{p['example']}」", ""]
             Path(f"{patterns_path}.md").write_text("\n".join(md) + "\n", encoding="utf-8")
             print(f"  型を {len(patterns)}件 言語化 → {patterns_path}.json / .md")
     else:
