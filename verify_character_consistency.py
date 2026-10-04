@@ -108,17 +108,45 @@ def build_stopwords(defined: list, aliases: dict, extra_terms: set) -> set:
     return stopwords
 
 
+def clean_character_name(raw: str) -> str:
+    """生成側の見出し表記をキャラ名だけに正規化する（2026-10-04 追加）.
+
+    gen_characters.py の出力は `## 1. ユウト (Yuto) / 17歳` のように
+    **番号・ローマ字・年齢**が付く。これをそのまま名前として扱うと、本文の `ユウト` と
+    一致せず「定義されたが未登場」の誤検出になり、**foundation の全周がFAILして
+    永久に合格しない**（実測: 9周連続FAIL）。
+    """
+    s = raw.strip()
+    s = re.sub(r"^#{1,6}\s*", "", s)                            # 見出し記号
+    s = re.sub(r"^[\d０-９]+\s*[.．、)）]\s*", "", s)             # 先頭の番号
+    s = re.sub(r"^[【\[（(][^】\]）)]*[】\]）)]\s*", "", s)        # 先頭の【…】
+    s = re.sub(r"^(追加キャラクター|追加|新規)[：:]\s*", "", s)    # 追加キャラクター：
+    s = re.sub(r"^(主要人物|登場人物)[：:]\s*", "", s)
+    s = s.split("/")[0]                                          # / 17歳 を落とす
+    s = re.sub(r"[（(][^）)]*[）)]", "", s)                       # (Yuto) を落とす
+    s = re.sub(r"[（(].*$", "", s)                               # 閉じない括弧の端
+    return s.strip(" 　・-—–=*")
+
+
 def extract_defined_names(characters: Path) -> list:
-    """characters.md の `## キャラ名（かな）` 見出しからキャラ名を抽出."""
+    """characters.md の `## キャラ名（かな）` 見出しからキャラ名を抽出.
+
+    見出しに番号・ローマ字・年齢が付いていても、キャラ名だけを取り出す。
+    """
     if not characters.exists():
         return []
     names = []
     for line in strip_html_comments(characters.read_text(encoding="utf-8")).splitlines():
-        m = re.match(r"^##\s+(.+?)(?:（.*?）)?\s*$", line.strip())
-        if m:
-            name = m.group(1).strip()
-            if name and not name.startswith(("追加", "キャラクター間", "最終")):
-                names.append(name)
+        m = re.match(r"^##\s+(.+?)\s*$", line.strip())
+        if not m:
+            continue
+        name = clean_character_name(m.group(1))
+        # 見出しの「語」でないもの（長すぎる・文になっている）は名前とみなさない
+        if not name or len(name) > 12 or any(c in name for c in "。、：:"):
+            continue
+        if name.startswith(("追加", "キャラクター間", "最終")):
+            continue
+        names.append(name)
     return names
 
 
@@ -136,7 +164,7 @@ def extract_seed_characters(seed: Path) -> list:
             if line.strip() and not line.startswith(("#", "ストーリー", "魅力的")):
                 m = re.match(r"^[-*]\s*(.+?)[:：]", line.strip())
                 if m:
-                    names.append(m.group(1).strip())
+                    names.append(clean_character_name(m.group(1)))
             elif line.startswith(("ストーリー", "魅力的")):
                 break
     return names
@@ -150,7 +178,7 @@ def extract_outline_povs(outline: Path) -> list:
     for line in strip_html_comments(outline.read_text(encoding="utf-8")).splitlines():
         m = re.search(r"\*\*POV[：:]\*\*\s*(.+)", line)
         if m:
-            povs.append(m.group(1).strip())
+            povs.append(clean_character_name(m.group(1)))
     return povs
 
 
@@ -164,6 +192,41 @@ def extract_text(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
+def _name_seen(name: str, text: str) -> bool:
+    """名前が本文に登場しているか。**肩書付きの定義**でも拾えるようにする（2026-10-04）.
+
+    定義側は `聖歌隊長ルナ`・`贋記師・カイル` のように肩書・役割が付くことがあり、
+    本文は `ルナ`・`カイル` とだけ書く。完全一致だけで判定すると「定義されたが未登場」を
+    誤検出して foundation が永久に通らない（実測: 9周連続FAIL）。
+    区切り（・、の、＝）で割った各片と、末尾の部分名（2字以上）が本文にあれば登場とみなす。
+    """
+    base = name.split("（")[0].strip()
+    if not base:
+        return False
+    if base in text:
+        return True
+    parts = [p for p in re.split(r"[・、,／/＝=の]", base) if len(p.strip()) >= 2]
+    for p in parts:
+        if p.strip() in text:
+            return True
+    # 肩書を落とした部分名（末尾2〜4字）で照合する
+    for n in (2, 3, 4):
+        if len(base) > n and base[-n:] in text:
+            return True
+    return False
+
+
+def _same_person(a: str, b: str) -> bool:
+    """同じ人物を指すか（完全一致・部分一致のどちらでも真）."""
+    a, b = a.split("（")[0].strip(), b.split("（")[0].strip()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return len(shorter) >= 2 and shorter in longer
+
+
 def check_defined_but_unused(defined: list, outline_text: str,
                              chapter_text: str, stopwords: set) -> list:
     """characters.md に定義されたが outline/本文に一度も登場しないキャラ."""
@@ -172,18 +235,19 @@ def check_defined_but_unused(defined: list, outline_text: str,
         base = name.split("（")[0].strip()
         if base in stopwords:
             continue
-        if base not in outline_text and base not in chapter_text:
+        if not _name_seen(name, outline_text) and not _name_seen(name, chapter_text):
             unused.append(name)
     return unused
 
 
 def check_pov_undefined(defined: list, outline_povs: list, stopwords: set) -> list:
     """outline の POV に登場するが characters.md に定義されていないキャラ."""
-    defined_bases = {n.split("（")[0].strip() for n in defined}
     undefined = []
     for pov in outline_povs:
         base = pov.split("（")[0].strip()
-        if base and base not in defined_bases and base not in stopwords:
+        if not base or base in stopwords:
+            continue
+        if not any(_same_person(base, d) for d in defined):
             undefined.append(f"outline POV: {pov}")
     return undefined
 

@@ -192,10 +192,23 @@ def git_add_commit(message: str) -> str:
         return ""
 
 
-def git_reset_hard(ref: str = "HEAD~1"):
-    """Hard reset to discard bad changes."""
+def git_reset_hard(ref: str = "HEAD~1", keep_seed: bool = True):
+    """Hard reset to discard bad changes.
+
+    seed.txt だけは巻き戻さない（2026-10-04 修正）。seed.txt は「人間が書く唯一の入力」
+    なので、`--from-scratch` で種を貼った直後に foundation の1周目が失敗して
+    `git reset --hard` が走ると、**未コミットの種が消えて見本（サンプル作品）に戻る**。
+    以降の周回は見本の物語を作り続け、整合チェックが永久に通らない。
+    """
+    seed_file = BASE_DIR / "seed.txt"
+    seed_backup = seed_file.read_text(encoding="utf-8") if seed_file.exists() else None
     step(f"GIT RESET: {ref}")
     run_tool(f"git reset --hard {ref}")
+    if keep_seed and seed_backup:
+        now = seed_file.read_text(encoding="utf-8") if seed_file.exists() else ""
+        if now != seed_backup:
+            seed_file.write_text(seed_backup, encoding="utf-8")
+            print("  SEED KEPT: seed.txt はリセットで戻さない（人間の入力を守る）")
 
 
 def git_short_hash() -> str:
