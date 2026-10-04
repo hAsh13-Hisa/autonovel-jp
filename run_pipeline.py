@@ -717,6 +717,10 @@ CONSISTENCY_TIMEOUT = int(os.environ.get("AUTONOVEL_CONSISTENCY_TIMEOUT", "900")
 # 一対比較（Elo）で章の採否を決める。点が下がった改訂を、両順序で勝てば採用する。
 ELO_DECIDE = os.environ.get("AUTONOVEL_ELO_DECIDE", "1") != "0"
 ELO_TIMEOUT = int(os.environ.get("AUTONOVEL_ELO_TIMEOUT", "600"))
+# 強みの移植（改訂の向きを逆にする＝天井を上げる）。0 で無効化。
+STRENGTH = os.environ.get("AUTONOVEL_STRENGTH", "1") != "0"
+STRENGTH_MAX_BRIEFS = int(os.environ.get("AUTONOVEL_STRENGTH_MAX_BRIEFS", "2"))
+STRENGTH_TIMEOUT = int(os.environ.get("AUTONOVEL_STRENGTH_TIMEOUT", "900"))
 
 
 def gate_cmd_for(path: str) -> str:
@@ -842,6 +846,25 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         else:
             step("No strong consensus items found from panel")
 
+        # -- Step 5b: 強みの移植（平均点の底上げではなく、天井を上げる）--
+        # パネルが「最も良い場面」と答えた章から効いている型を言語化し、弱い章へ移植する
+        # 指示書を作る。指示書は下の改訂ループが拾って gen_revision に渡す
+        # （章ゲート→修復→判定→一対比較の安全網はそのまま効く）。
+        if STRENGTH:
+            step("Transplanting what works (best scenes → weak chapters)...")
+            uv_run(f"strength_transplant.py --patterns --briefs "
+                   f"--max-briefs {STRENGTH_MAX_BRIEFS} --cycle {cycle} "
+                   f"--out-dir {BRIEFS_DIR}", timeout=STRENGTH_TIMEOUT)
+            for sf in sorted(BRIEFS_DIR.glob(f"ch*_cycle{cycle}_strength.md")):
+                sm = re.search(r"ch0*(\d+)", sf.name)
+                if not sm:
+                    continue
+                s_num = int(sm.group(1))
+                if not any(it["chapter"] == s_num for it in consensus_items):
+                    consensus_items.append({"chapter": s_num, "question": "strength",
+                                            "count": 1})
+                    step(f"  移植の対象に追加: Ch {s_num}（{sf.name}）")
+
         # -- Step 5: Targeted revisions for consensus items --
         for idx, item in enumerate(consensus_items):
             ch_num = item["chapter"]
@@ -855,7 +878,12 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             # Generate revision brief
             brief_file = BRIEFS_DIR / f"ch{ch_num:02d}_cycle{cycle}_{question}.md"
             gen_brief = BASE_DIR / "gen_brief.py"
-            if gen_brief.exists():
+            strength_brief = BRIEFS_DIR / f"ch{ch_num:02d}_cycle{cycle}_strength.md"
+            if strength_brief.exists():
+                # 強みの移植の指示書（Step 5b が作る）を優先して使う
+                brief_file = strength_brief
+                step(f"Using the strength-transplant brief for Ch {ch_num}")
+            elif gen_brief.exists():
                 step(f"Generating brief for Ch {ch_num}...")
                 run_tool(f"uv run python gen_brief.py --panel {ch_num}", timeout=300)
                 # gen_brief.py may write to briefs/ — find the most recent brief
