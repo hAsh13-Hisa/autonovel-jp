@@ -37,6 +37,9 @@ EDIT_LOGS_DIR = BASE_DIR / "edit_logs"
 EVAL_LOGS_DIR = BASE_DIR / "eval_logs"
 
 FOUNDATION_THRESHOLD = 7.5
+# 設定が合格点に届かないまま何周続いたら止めるか。実測: 届かないまま20周（＝上限）まで
+# 回り続け、判定だけで数十万トークンを捨てた。改善しないループは早く止める。
+FOUNDATION_PLATEAU_ITERS = int(os.environ.get("AUTONOVEL_FOUNDATION_PLATEAU_ITERS", "4"))
 CHAPTER_THRESHOLD = 4.0
 MAX_FOUNDATION_ITERS = 20
 MAX_CHAPTER_ATTEMPTS = 5
@@ -238,6 +241,16 @@ def stop_for_eval_failure(stage: str, detail: str = "") -> None:
     raise SystemExit(0)
 
 
+def stop_for_foundation_plateau(no_gain: int, best_score: float) -> None:
+    """設定が合格点に届かないまま改善しないときは止める（消費の空回りを防ぐ）."""
+    banner("STOPPED — foundation is not improving", "=")
+    print(f"  {no_gain} 周続けて合格点（{FOUNDATION_THRESHOLD}）に届きませんでした"
+          f"（最高 {best_score}）。")
+    print("  周回を重ねても改善しないのでここで止めます（無駄な消費を防ぐため）。")
+    print("  見直す場所: 判定の較正（evaluate.py）か、設定の生成（gen_*.py）。")
+    raise SystemExit(0)
+
+
 def git_reset_hard(ref: str = "HEAD~1", keep_seed: bool = True):
     """Hard reset to discard bad changes.
 
@@ -333,6 +346,7 @@ def run_foundation(state: dict) -> dict:
 
     best_score = state.get("foundation_score", 0.0)
     iteration = state.get("iteration", 0)
+    no_gain = 0
 
     for i in range(iteration + 1, MAX_FOUNDATION_ITERS + 1):
         if quota_stop_requested():
@@ -370,6 +384,7 @@ def run_foundation(state: dict) -> dict:
             git_reset_hard("HEAD")
             log_result("discarded", "foundation", 0.0, 0, "discard",
                        f"Iteration {i}: character consistency FAILED")
+            no_gain += 1
             continue
 
         # 2. Evaluate (retry on parse failure / judge model returning bad JSON)
@@ -402,16 +417,21 @@ def run_foundation(state: dict) -> dict:
             state["foundation_score"] = score
             state["lore_score"] = lore
             save_state(state)
+            no_gain = 0
         else:
             step(f"Score did not improve ({score} <= {best_score}), discarding")
             git_reset_hard("HEAD")
             log_result("discarded", "foundation", score, 0, "discard",
                        f"Iteration {i}: no improvement ({score} <= {best_score})")
+            no_gain += 1
 
         # 4. Check exit condition
         if best_score >= FOUNDATION_THRESHOLD:
             step(f"Foundation score {best_score} >= {FOUNDATION_THRESHOLD} — PASSED")
             break
+        # 合格点に届かないまま改善しないなら、周回を重ねず止める（消費を守る）
+        if no_gain >= FOUNDATION_PLATEAU_ITERS:
+            stop_for_foundation_plateau(no_gain, best_score)
     else:
         step(f"WARNING: max iterations ({MAX_FOUNDATION_ITERS}) reached "
              f"with score {best_score}")

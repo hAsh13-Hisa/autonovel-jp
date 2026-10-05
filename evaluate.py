@@ -14,6 +14,7 @@ to tune what "good" means. The agent treats it as a black box.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -354,13 +355,18 @@ def load_file(path):
 
 
 def load_layer_files():
-    """Load all planning layer files."""
+    """Load all planning layer files.（長い文書は判定の費用を抑えるため切れる）"""
+    def clip(text: str) -> str:
+        if JUDGE_DOC_CHARS and len(text) > JUDGE_DOC_CHARS:
+            return text[:JUDGE_DOC_CHARS] + "\n\n【長いため以下略】\n"
+        return text
+
     return {
-        "voice": load_file(BASE_DIR / "voice.md"),
-        "world": load_file(BASE_DIR / "world.md"),
-        "characters": load_file(BASE_DIR / "characters.md"),
-        "outline": load_file(BASE_DIR / "outline.md"),
-        "canon": load_file(BASE_DIR / "canon.md"),
+        "voice": clip(load_file(BASE_DIR / "voice.md")),
+        "world": clip(load_file(BASE_DIR / "world.md")),
+        "characters": clip(load_file(BASE_DIR / "characters.md")),
+        "outline": clip(load_file(BASE_DIR / "outline.md")),
+        "canon": clip(load_file(BASE_DIR / "canon.md")),
     }
 
 
@@ -456,9 +462,13 @@ JSON_COMPACT_RULES = (
     "3. 各文字列は短く（おおむね40文字以内）。長文の講評・同じ内容の繰り返しは書かない。\n"
 )
 
-JUDGE_MAX_TOKENS = int(os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS", "16000"))
+JUDGE_MAX_TOKENS = int(os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS", "6000"))
 JUDGE_MAX_TOKENS_ESCALATED = int(
     os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS_ESCALATED", "32000"))
+# 同じ入力の評価は再利用する（判定モデルを呼ばない）。実測: 1回 約44,000 トークン。
+JUDGE_CACHE = os.environ.get("AUTONOVEL_JUDGE_CACHE", "1") != "0"
+# 判定に送る各文書の上限文字数（0＝無制限。長い設定はここで切って費用を抑える）。
+JUDGE_DOC_CHARS = int(os.environ.get("AUTONOVEL_JUDGE_DOC_CHARS", "0"))
 
 
 def _extract_scalars(text: str) -> dict:
@@ -496,9 +506,28 @@ def dump_parse_failure(text: str, label: str = "parse_fail") -> Path:
     return p
 
 
+def _cache_path(key: str) -> Path:
+    d = EVAL_LOG_DIR / "cache"
+    d.mkdir(exist_ok=True)
+    return d / f"{key}.json"
+
+
 def call_judge_json(prompt: str, max_tokens: int | None = None) -> dict:
-    """judge を呼んで JSON を返す。切れていたら上限を上げて1回やり直す。"""
+    """judge を呼んで JSON を返す。同じ入力なら前の結果を再利用する（費用対策）."""
     prompt = prompt + JSON_COMPACT_RULES
+    key = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+    cached = _cache_path(key)
+    if JUDGE_CACHE and cached.exists():
+        sys.stderr.write("[evaluate] 同じ入力の評価が既にあるので再利用します"
+                         "（判定モデルを呼びません）\n")
+        return json.loads(cached.read_text(encoding="utf-8"))
+    result = _call_judge_json_uncached(prompt, max_tokens)
+    if JUDGE_CACHE:
+        cached.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return result
+
+
+def _call_judge_json_uncached(prompt: str, max_tokens: int | None = None) -> dict:
     mt = max_tokens or JUDGE_MAX_TOKENS
     raw = call_judge(prompt, max_tokens=mt)
     try:
