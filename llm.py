@@ -80,6 +80,39 @@ class _Transient(Exception):
         self.wait = wait
 
 
+# --- 上限・レート制限で「黙って周回し続ける」のを止める（2026-10-04 追加）--------
+# 429 が連続したら「いまプロバイダが受け付けていない」と判断し、合図のファイルを置く。
+# パイプラインはこのファイルを見て**明示的に停止**する（黙って周回を続けると数時間を空費する。
+# 実測: 429 が続いたまま 8時間・19周を空回りし、その間の生成は全滅していた）。
+QUOTA_STREAK_LIMIT = max(1, int(os.environ.get("AUTONOVEL_QUOTA_STREAK", "20")))
+QUOTA_MARKER = Path(os.environ.get("AUTONOVEL_QUOTA_MARKER",
+                                   str(BASE_DIR / "edit_logs" / "STOP_QUOTA.txt")))
+_streak = {"n": 0}
+
+
+def _quota_note_failure() -> None:
+    """429 で失敗した回数を数え、閾値を超えたら停止の合図を置く。"""
+    _streak["n"] += 1
+    if _streak["n"] < QUOTA_STREAK_LIMIT:
+        return
+    try:
+        import datetime as _dt
+        QUOTA_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        QUOTA_MARKER.write_text(
+            f"モデル側が上限（HTTP 429）を {_streak['n']} 回連続で返しました。\n"
+            f"時刻: {_dt.datetime.now().isoformat(timespec='seconds')}\n"
+            f"再開: このファイルを消して同じコマンドを再実行（quota_guard.py 経由なら自動再開）。\n",
+            encoding="utf-8")
+        sys.stderr.write(f"[llm] 429 が {_streak['n']} 回連続 → {QUOTA_MARKER} を置きました（停止の合図）\n")
+    except Exception as e:      # noqa: BLE001
+        sys.stderr.write(f"[llm] 停止の合図を書けませんでした: {e}\n")
+
+
+def _quota_note_success() -> None:
+    if _streak["n"]:
+        _streak["n"] = 0
+
+
 def _wait_seconds(attempt: int, resp=None) -> float:
     """待ち時間。Retry-After があれば優先、なければ指数バックオフ（最大600秒）。"""
     if resp is not None:
@@ -94,18 +127,21 @@ def _wait_seconds(attempt: int, resp=None) -> float:
 
 def _post(url: str, headers: dict, payload: dict):
     """一時的な失敗を待ってやり直す POST。上限・混雑・通信断で即死させない。"""
-    last = None
+    last, last_status = None, None
     for attempt in range(1, LLM_RETRIES + 1):
         try:
             resp = httpx.post(url, headers=headers, json=payload, timeout=900)
             if resp.status_code in RETRY_STATUS:
+                last_status = resp.status_code
                 raise _Transient(f"HTTP {resp.status_code}",
                                  _wait_seconds(attempt, resp))
             resp.raise_for_status()
+            _quota_note_success()
             return resp
         except _Transient as e:
             last, wait = e, e.wait
         except httpx.HTTPError as e:
+            last_status = getattr(getattr(e, "response", None), "status_code", None)
             last, wait = e, _wait_seconds(attempt)
         if attempt >= LLM_RETRIES:
             break
@@ -113,6 +149,8 @@ def _post(url: str, headers: dict, payload: dict):
                          f"{attempt}/{LLM_RETRIES - 1}\n")
         sys.stderr.flush()
         time.sleep(wait)
+    if last_status == 429:
+        _quota_note_failure()
     raise last if last is not None else RuntimeError(f"POST failed: {url}")
 
 

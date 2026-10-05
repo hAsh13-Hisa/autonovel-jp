@@ -192,6 +192,32 @@ def git_add_commit(message: str) -> str:
         return ""
 
 
+QUOTA_MARKER = BASE_DIR / "edit_logs" / "STOP_QUOTA.txt"
+
+
+def quota_stop_requested() -> bool:
+    """llm.py が「429 が連続＝プロバイダが受け付けていない」と判断したときの合図を見る."""
+    return QUOTA_MARKER.exists()
+
+
+def stop_for_quota() -> bool:
+    """上限で止めるときの表示。周回を空回りさせず、再開方法を示して止まる.
+
+    実測（2026-10-04）: 429 が続いたまま 8時間・19周を空回りし、その間の生成は全滅した。
+    周回を続けても回復しないので、合図が出たら**ここで止める**。
+    """
+    banner("STOPPED — model provider is refusing requests (HTTP 429)", "=")
+    print(f"  詳細: {QUOTA_MARKER}")
+    print("  再開: このファイルを消して、同じコマンドをもう一度実行してください。")
+    print("        使用率を監視して自動で待機・再開させたい場合は quota_guard.py 経由で走らせます。")
+    try:
+        print("  ---")
+        print("  " + QUOTA_MARKER.read_text(encoding="utf-8").strip().replace("\n", "\n  "))
+    except OSError:
+        pass
+    raise SystemExit(0)      # 周回を続けても回復しないので、ここで止める
+
+
 def git_reset_hard(ref: str = "HEAD~1", keep_seed: bool = True):
     """Hard reset to discard bad changes.
 
@@ -289,6 +315,8 @@ def run_foundation(state: dict) -> dict:
     iteration = state.get("iteration", 0)
 
     for i in range(iteration + 1, MAX_FOUNDATION_ITERS + 1):
+        if quota_stop_requested():
+            stop_for_quota()
         banner(f"Foundation Iteration {i}", "-")
         state["iteration"] = i
 
@@ -526,6 +554,8 @@ def run_drafting(state: dict) -> dict:
     CHAPTERS_DIR.mkdir(exist_ok=True)
 
     for ch in range(start_chapter, total + 1):
+        if quota_stop_requested():
+            stop_for_quota()
         banner(f"Drafting Chapter {ch}/{total}", "-")
         drafted = False
 
