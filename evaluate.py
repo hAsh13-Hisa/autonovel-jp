@@ -354,11 +354,18 @@ def load_file(path):
         return ""
 
 
-def load_layer_files():
-    """Load all planning layer files.（長い文書は判定の費用を抑えるため切れる）"""
+def load_layer_files(clip_chars: int | None = None):
+    """Load all planning layer files.
+
+    clip_chars: 各文書の上限文字数。None なら env の AUTONOVEL_JUDGE_DOC_CHARS。
+    **設定（foundation）の判定は全文**、章の判定は切り詰める（章の判定は数が多く、
+    費用が効くため。2026-10-05 実測: 判定1回 43,964トークン）。
+    """
+    limit = JUDGE_DOC_CHARS if clip_chars is None else clip_chars
+
     def clip(text: str) -> str:
-        if JUDGE_DOC_CHARS and len(text) > JUDGE_DOC_CHARS:
-            return text[:JUDGE_DOC_CHARS] + "\n\n【長いため以下略】\n"
+        if limit and len(text) > limit:
+            return text[:limit] + "\n\n【長いため以下略】\n"
         return text
 
     return {
@@ -467,8 +474,9 @@ JUDGE_MAX_TOKENS_ESCALATED = int(
     os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS_ESCALATED", "32000"))
 # 同じ入力の評価は再利用する（判定モデルを呼ばない）。実測: 1回 約44,000 トークン。
 JUDGE_CACHE = os.environ.get("AUTONOVEL_JUDGE_CACHE", "1") != "0"
-# 判定に送る各文書の上限文字数（0＝無制限。長い設定はここで切って費用を抑える）。
-JUDGE_DOC_CHARS = int(os.environ.get("AUTONOVEL_JUDGE_DOC_CHARS", "0"))
+# 判定に送る各文書の上限文字数（0＝無制限）。章の判定は数が多いので既定で切る。
+# 設定(foundation)の判定は全文（evaluate_foundation が clip_chars=0 を渡す）。
+JUDGE_DOC_CHARS = int(os.environ.get("AUTONOVEL_JUDGE_DOC_CHARS", "6000"))
 
 
 def _extract_scalars(text: str) -> dict:
@@ -712,7 +720,7 @@ invent something during drafting, your score is too high. Revise down.
 
 
 def evaluate_foundation():
-    layers = load_layer_files()
+    layers = load_layer_files(clip_chars=0)      # 設定の判定は全文で見る（数が少ないので費用は小さい）
     prompt = FOUNDATION_PROMPT.format(**layers)
     return call_judge_json(prompt)
 
