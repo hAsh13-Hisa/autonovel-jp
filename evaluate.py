@@ -425,9 +425,92 @@ def parse_json_response(text):
     try:
         return json.loads(text, strict=False)
     except json.JSONDecodeError:
-        # Last resort: fix common issues (literal newlines in strings)
-        fixed = re.sub(r'(?<!\\)\n', '\\n', text)
+        pass
+    # 途中で切れた（＝出力量の上限に張り付いた）応答を救う。
+    # 実測（2026-10-05）: 設定評価が 16,000 トークン上限で切れて JSON が閉じず、
+    # 解釈失敗 → スコア -1.0 扱い → 19周・約100万トークンを空回りした。
+    salv = _salvage_truncated(text[start:])
+    if isinstance(salv, dict) and any(
+            k in salv for k in ("overall_score", "lore_score", "novel_score")):
+        salv["_truncated_response_salvaged"] = True
+        return salv
+    scal = _extract_scalars(text[start:])
+    if scal:
+        scal["_truncated_response_salvaged"] = True
+        return scal
+    # Last resort: fix common issues (literal newlines in strings)
+    fixed = re.sub(r'(?<!\\)\n', '\\n', text)
+    try:
         return json.loads(fixed, strict=False)
+    except json.JSONDecodeError:
+        dump_parse_failure(text)
+        raise
+
+
+# --- 判定（judge）の応答が読めないときの保険 -------------------------------
+
+JSON_COMPACT_RULES = (
+    "\n\n=== OUTPUT RULES (must follow) ===\n"
+    "1. 出力は **JSON オブジェクト1つだけ**。前後に説明・あいさつ・コードフェンスを書かない。\n"
+    "2. `overall_score` と `lore_score`（全体評価なら `novel_score`）は **JSON の先頭**に書く。\n"
+    "3. 各文字列は短く（おおむね40文字以内）。長文の講評・同じ内容の繰り返しは書かない。\n"
+)
+
+JUDGE_MAX_TOKENS = int(os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS", "16000"))
+JUDGE_MAX_TOKENS_ESCALATED = int(
+    os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS_ESCALATED", "32000"))
+
+
+def _extract_scalars(text: str) -> dict:
+    """壊れた／切れた JSON から、最低限の点数だけ拾う（最後の保険）。"""
+    out = {}
+    for key in ("overall_score", "lore_score", "novel_score"):
+        m = re.search(rf'"{key}"\s*:\s*(-?\d+(?:\.\d+)?)', text)
+        if m:
+            out[key] = float(m.group(1))
+    return out
+
+
+def _salvage_truncated(body: str):
+    """閉じ括弧が来ない（＝途中で切れた）JSON を、切れた所で閉じて読む。"""
+    if not body.startswith("{"):
+        return None
+    cut = body.rfind(",")
+    for cand in (body, body[:cut] if cut > 0 else body):
+        fixed = cand.rstrip().rstrip(",")
+        if fixed.count('"') % 2 == 1:          # 閉じていない文字列を閉じる
+            fixed += '"'
+        fixed += "}" * (fixed.count("{") - fixed.count("}"))   # 開いた括弧を閉じる
+        try:
+            return json.loads(fixed, strict=False)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def dump_parse_failure(text: str, label: str = "parse_fail") -> Path:
+    """解釈できなかった生の応答を残す（次に調べるときに1秒で分かるように）。"""
+    p = EVAL_LOG_DIR / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{label}.txt"
+    p.write_text(text, encoding="utf-8")
+    sys.stderr.write(f"[evaluate] 生の応答を保存しました: {p}\n")
+    return p
+
+
+def call_judge_json(prompt: str, max_tokens: int | None = None) -> dict:
+    """judge を呼んで JSON を返す。切れていたら上限を上げて1回やり直す。"""
+    prompt = prompt + JSON_COMPACT_RULES
+    mt = max_tokens or JUDGE_MAX_TOKENS
+    raw = call_judge(prompt, max_tokens=mt)
+    try:
+        return parse_json_response(raw)
+    except Exception:
+        if JUDGE_MAX_TOKENS_ESCALATED > mt:
+            sys.stderr.write(
+                f"[evaluate] 応答が解釈できません（{mt} トークン上限）→ "
+                f"{JUDGE_MAX_TOKENS_ESCALATED} でやり直します\n")
+            raw = call_judge(prompt, max_tokens=JUDGE_MAX_TOKENS_ESCALATED)
+            return parse_json_response(raw)
+        raise
 
 
 # --- Foundation Evaluation ---
@@ -602,8 +685,7 @@ invent something during drafting, your score is too high. Revise down.
 def evaluate_foundation():
     layers = load_layer_files()
     prompt = FOUNDATION_PROMPT.format(**layers)
-    raw = call_judge(prompt, max_tokens=16000)
-    return parse_json_response(raw)
+    return call_judge_json(prompt)
 
 
 # --- Chapter Evaluation ---
@@ -780,8 +862,7 @@ def evaluate_chapter(chapter_num):
         prev_chapter_tail=prev_tail,
         chapter_text=chapter_text,
     )
-    raw = call_judge(prompt, max_tokens=16000)
-    result = parse_json_response(raw)
+    result = call_judge_json(prompt)
 
     # Mechanical slop check -- adjusts score independently of judge
     slop = slop_score(chapter_text)
@@ -867,8 +948,7 @@ def evaluate_full():
         outline=layers["outline"],
         chapter_summaries="\n".join(summaries),
     )
-    raw = call_judge(prompt)
-    return parse_json_response(raw)
+    return call_judge_json(prompt)
 
 
 # --- Main ---

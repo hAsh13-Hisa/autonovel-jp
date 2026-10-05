@@ -40,6 +40,9 @@ FOUNDATION_THRESHOLD = 7.5
 CHAPTER_THRESHOLD = 4.0
 MAX_FOUNDATION_ITERS = 20
 MAX_CHAPTER_ATTEMPTS = 5
+# 判定（judge）の応答が読めないときのやり直し回数。すべて失敗したら
+# 「低い点」ではなく「評価の失敗」として止める（stop_for_eval_failure）。
+MAX_JUDGE_TRIES = 3
 MIN_REVISION_CYCLES = 3
 MAX_REVISION_CYCLES = 6
 PLATEAU_DELTA = 0.3
@@ -218,6 +221,23 @@ def stop_for_quota() -> bool:
     raise SystemExit(0)      # 周回を続けても回復しないので、ここで止める
 
 
+def stop_for_eval_failure(stage: str, detail: str = "") -> None:
+    """評価そのものが成立しなかったときは止める（＝作品の出来とは無関係）.
+
+    実測（2026-10-05）: 判定が解釈できないまま「スコア -1.0＝改善なし」と扱われ、
+    生成物を毎回捨てながら19周・約100万トークンを空回りした。**壊れた評価を
+    「低い点」と混同しない**のがこの関数の役目。
+    """
+    banner("STOPPED — the evaluation itself failed (this is NOT a low score)", "=")
+    print(f"  段階: {stage}")
+    if detail:
+        print("  ---")
+        print("  " + detail.strip()[-800:].replace("\n", "\n  "))
+    print("  生成物は捨てていません（そのまま残っています）。")
+    print("  直したら同じコマンドで再開できます（state.json から続きます）。")
+    raise SystemExit(0)
+
+
 def git_reset_hard(ref: str = "HEAD~1", keep_seed: bool = True):
     """Hard reset to discard bad changes.
 
@@ -356,13 +376,19 @@ def run_foundation(state: dict) -> dict:
         step("Evaluating foundation...")
         score = -1.0
         lore = -1.0
-        for eval_attempt in range(1, 4):
+        eval_result = None
+        for eval_attempt in range(1, MAX_JUDGE_TRIES + 1):
             eval_result = uv_run("evaluate.py --phase=foundation", timeout=300)
             score = parse_score(eval_result.stdout, "overall_score")
             lore = parse_lore_score(eval_result.stdout)
             if score >= 0:
                 break
             step(f"Evaluation parse failed (score {score}), retrying ({eval_attempt}/3)...")
+
+        if score < 0:
+            stop_for_eval_failure(
+                f"foundation iteration {i} の評価（{MAX_JUDGE_TRIES}回試して解釈できず）",
+                ((eval_result.stderr or "") + (eval_result.stdout or "")) if eval_result else "")
 
         step(f"Foundation score: {score}  (lore: {lore}, prev best: {best_score})")
 
@@ -517,11 +543,15 @@ def trial_chapter_test(state: dict, total: int) -> tuple:
     gates_ok = healed or gate.returncode == 0
 
     score = -1.0
-    for _ in range(3):
+    ev = None
+    for _ in range(MAX_JUDGE_TRIES):
         ev = uv_run(f"evaluate.py --chapter={ch}", timeout=300)
         score = parse_score(ev.stdout, "overall_score")
         if score >= 0:
             break
+    if score < 0:
+        stop_for_eval_failure(f"試作1章（第{ch}章）の評価（{MAX_JUDGE_TRIES}回試して解釈できず）",
+                              ((ev.stderr or "") + (ev.stdout or "")) if ev else "")
     score_ok = score >= CHAPTER_THRESHOLD
 
     if gates_ok and score_ok:
@@ -579,12 +609,18 @@ def run_drafting(state: dict) -> dict:
 
             # Evaluate (retry on parse failure / judge model returning bad JSON)
             score = -1.0
-            for eval_attempt in range(1, 4):
+            eval_result = None
+            for eval_attempt in range(1, MAX_JUDGE_TRIES + 1):
                 eval_result = uv_run(f"evaluate.py --chapter={ch}", timeout=300)
                 score = parse_score(eval_result.stdout, "overall_score")
                 if score >= 0:
                     break
                 step(f"Chapter eval parse failed (score {score}), retrying ({eval_attempt}/3)...")
+
+            if score < 0:
+                stop_for_eval_failure(
+                    f"第{ch}章の評価（{MAX_JUDGE_TRIES}回試して解釈できず）",
+                    ((eval_result.stderr or "") + (eval_result.stdout or "")) if eval_result else "")
             step(f"Chapter {ch} score: {score}")
 
             if score >= CHAPTER_THRESHOLD:
@@ -917,6 +953,9 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             # Snapshot the current chapter score for comparison
             pre_eval = uv_run(f"evaluate.py --chapter={ch_num}", timeout=300)
             pre_score = parse_score(pre_eval.stdout, "overall_score")
+            if pre_score < 0:
+                stop_for_eval_failure(f"改訂前 第{ch_num}章の評価（解釈できず）",
+                                      (pre_eval.stderr or "") + (pre_eval.stdout or ""))
 
             # Generate revision brief
             brief_file = BRIEFS_DIR / f"ch{ch_num:02d}_cycle{cycle}_{question}.md"
@@ -1002,6 +1041,9 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             # Evaluate revised chapter
             post_eval = uv_run(f"evaluate.py --chapter={ch_num}", timeout=300)
             post_score = parse_score(post_eval.stdout, "overall_score")
+            if post_score < 0:
+                stop_for_eval_failure(f"改訂後 第{ch_num}章の評価（解釈できず）",
+                                      (post_eval.stderr or "") + (post_eval.stdout or ""))
 
             ch_file = CHAPTERS_DIR / f"ch_{ch_num:02d}.md"
             word_count = len(ch_file.read_text().split()) if ch_file.exists() else 0
@@ -1041,6 +1083,9 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         if novel_score < 0:
             # Fallback: try overall_score
             novel_score = parse_score(full_eval.stdout, "overall_score")
+        if novel_score < 0:
+            stop_for_eval_failure("全体評価（解釈できず）",
+                                  (full_eval.stderr or "") + (full_eval.stdout or ""))
 
         total_words = count_words_in_chapters()
         step(f"Novel score: {novel_score}  (prev: {prev_score}, words: {total_words})")
