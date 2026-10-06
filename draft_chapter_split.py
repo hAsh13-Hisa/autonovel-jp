@@ -161,6 +161,17 @@ def repeated_sentences(new_text, prev_text, min_len=8):
     return hits
 
 
+def denial_lines(text):
+    """否定・拒絶の型の台詞（「そんなわけない」「ありえない」「正気か」…）を返す。
+
+    2026-10-06 実測: 第3章で11回。話は進むのに同じ反応で止まるため、章が反復に感じられた
+    （実際に読んだ感想＝「芯は良いが、編集者が最初に削る部分が丸ごと残っている」）。
+    """
+    return [l.strip() for l in text.split("\n") if l.strip()
+            and re.search(r"そんな(わけ|こと|もん)|ありえない|あり得ない|正気|嘘(つけ|だろ)|"
+                          r"馬鹿な|やめろ|冗談|はずがな|わけがな", l)]
+
+
 def trim_to_sentence(text):
     """Trim trailing partial sentence so a chunk ends at a natural break."""
     text = text.rstrip()
@@ -216,6 +227,20 @@ def main():
         used = dialogue_lines(accumulated)
         used_block = ("【すでに使った台詞（同じ台詞・同じやり取りを繰り返さないこと。話を前に進める）】\n"
                       + "\n".join(f"・{u}" for u in used[-12:]) + "\n") if used else ""
+        # チャンクごとに「役割」を割り当てる。2026-10-06 実測: 全部のチャンクが
+        # 「主人公が何かを見る→相棒が否定する」の同じ型に戻り、第3章では否定の台詞が
+        # 11回・「シオンは」の地の文が18回あった（＝編集者が最初に削る部分）。
+        if i == 1:
+            role = ("【このチャンクの役割：導入】場所と状況を具体的に描き、人物を動かして始める。"
+                    "読者が先を読みたくなる小さな異変を1つ入れる。")
+        elif i == num_chunks:
+            role = ("【このチャンクの役割：結末】クライマックスの結果と代償を書く。人物が何かを失うか、"
+                    "何かが決定的に変わること。次章への引きを1文残して終える。")
+        elif i == num_chunks - 1:
+            role = "【このチャンクの役割：山】主人公が決断し、実行する。ここで対立が最大になる。"
+        else:
+            role = ("【このチャンクの役割：展開】新しい出来事・新しい人物・新しい場所のいずれかを"
+                    "必ず1つ入れて話を前へ進める。前のチャンクと同じやり取りを繰り返さない。")
         return f"""この小説の第{n}章の、チャンク{i}/{num_chunks}を書いてください。
 
 【スタイル見本・必ずこの文体で書く】
@@ -242,6 +267,8 @@ CANON（確定事実）：
 植え込み（伏線）：
 {plants}
 
+{role}
+
 {prev_txt}
 
 【ここまでに書いた本文（この直後から続ける。既に書いたことを繰り返さない）】
@@ -262,6 +289,9 @@ CANON（確定事実）：
 12. 「——」はこの章全体で1回までにすること（台詞冒頭のダッシュも含めて数える）。多用しないこと。自然な言い回しで始めること。
 13. 「……」はこの章全体で2回までにすること。間や沈黙を「……」で表す書き方を繰り返さないこと。間は句点・読点・短い動作や台詞で表すこと。
 14. 比喩（まるで／〜ように・ような・ようだ／みたい／あたかも／ごとく）は使いすぎないこと。1000字あたり3.0以下に収め、「まるで」と「みたい」の同型の繰り返しは4回以下にすること。比喩を重ねず、動作・台詞・具体物で書くこと。
+15. 【反応を繰り返さない】「そんなわけない」「ありえない」「正気か」と否定する台詞は、この章で2回まで。同じ反応で話を止めず、代わりに行動・提案・別の目的・突き放しで反応させること。
+16. 【人物を動かす】この章の中盤で、対立する人物の立場が必ず変わること（最後まで否定し続ける人物を書かない）。
+17. 【同じ動作を繰り返さない】「呆れる」「わざとらしく」「肩をすくめる」「首を振る」「耳を塞ぐ」を同じ章で2回以上使わないこと。
 
 {used_block}今すぐこのチャンクの本文を書いてください。本文は必ず日本語で書いてください。
 """
@@ -283,6 +313,7 @@ CANON（確定事実）：
                 result = trim_to_sentence(result)
                 ratio = dialogue_ratio(result)
                 reps = repeated_sentences(result, accumulated)
+                dens = denial_lines(result)
                 if best_chunk is None:
                     best_chunk, best_ratio = result, ratio
                 elif len(result) < 0.7 * len(best_chunk):
@@ -293,9 +324,12 @@ CANON（確定事実）：
                     best_chunk, best_ratio = result, ratio
                 if reps:
                     print(f"    前と丸かぶりの文 {len(reps)}件（例: {reps[0]}）→ 書き直し", file=sys.stderr)
+                if len(dens) >= 3:
+                    print(f"    否定の台詞が{len(dens)}回（上限2回）→ 書き直し", file=sys.stderr)
                 print(f"    セリフ{ratio*100:.0f}% 長さ{len(result)}字 -> "
-                      f"{'OK' if ratio >= DIALOGUE_GATE and not reps else '再試行'}", file=sys.stderr)
-                if ratio >= DIALOGUE_GATE and not reps:
+                      f"{'OK' if ratio >= DIALOGUE_GATE and not reps and len(dens) < 3 else '再試行'}",
+                      file=sys.stderr)
+                if ratio >= DIALOGUE_GATE and not reps and len(dens) < 3:
                     break
             chunk_results.append(best_chunk)
             accumulated = "\n".join(chunk_results)
