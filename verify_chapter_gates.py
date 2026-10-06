@@ -131,6 +131,9 @@ def main() -> int:
         mw = min_window_ratio(text) * 100
         dots, dash = text.count("……"), text.count("——")
         eng = count_english_words(text)
+        # 置換や生成で壊れた記号（文頭の読点・連続句読点）。2026-10-06 実測: 「……」を
+        # 「、」に置換した修復版だけに5箇所あり、素の原稿には0箇所だった。
+        punct_bad = len(re.findall(r"[「『（]\s*[、。]", text)) + len(re.findall(r"[、。]{2,}", text))
 
         def emit(key: str, label: str, val: str, ok: bool) -> None:
             """1項目を出力する。warn 指定の項目は落ちても all_ok を倒さない。"""
@@ -153,6 +156,7 @@ def main() -> int:
             ("dup", "重複(12字以上x2)", f"{dup} (=0)", dup == 0),
             ("symbols", "……/——/英語", f"{dots}/{dash}/{eng} (<=2/<=1/0)",
              dots <= 2 and dash <= 1 and eng == 0),
+            ("punct", "文頭の読点・連続句読点", f"{punct_bad} (=0)", punct_bad == 0),
         ]:
             emit(key, label, val, ok)
         # --- 比喩の型の反復（合否ゲート）---

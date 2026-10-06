@@ -132,6 +132,33 @@ def min_window_ratio(text, win=500):
     return min(vals) if vals else 0.0
 
 
+def dialogue_lines(text, min_len=8):
+    """本文中の台詞（「」の中身）で min_len 字以上のものを登場順に返す（同型は1つ）。"""
+    out, seen = [], set()
+    for m in re.finditer(r"「([^」]{%d,})」" % min_len, text):
+        s = m.group(1).strip()
+        if s[:14] in seen:
+            continue
+        seen.add(s[:14])
+        out.append(s[:40])
+    return out
+
+
+def repeated_sentences(new_text, prev_text, min_len=8):
+    """生成した本文の中に、それ以前と丸かぶりする文（min_len 字以上）があれば返す。
+
+    2026-10-06 実測: 1,200字ずつの分割生成では、各チャンクが前の場面に戻ってしまう
+    （第1章で同じやり取りが4回、同一の台詞が2回）。生成直後に検出して書き直させる。
+    """
+    prev = re.sub(r"\s+", "", prev_text)
+    hits = []
+    for s in re.split(r"(?<=[。！？」])", re.sub(r"\s+", "", new_text)):
+        s = s.strip()
+        if len(s) >= min_len and s in prev:
+            hits.append(s[:40])
+    return hits
+
+
 def trim_to_sentence(text):
     """Trim trailing partial sentence so a chunk ends at a natural break."""
     text = text.rstrip()
@@ -184,6 +211,9 @@ def main():
         ending = ("このチャンクで章を締めくくること。この章のビートをすべて回収し、章の結末を書くこと。"
                   if is_last else
                   "このチャンクは章の途中なので、結末を書かないこと。物語を前進させること。")
+        used = dialogue_lines(accumulated)
+        used_block = ("【すでに使った台詞（同じ台詞・同じやり取りを繰り返さないこと。話を前に進める）】\n"
+                      + "\n".join(f"・{u}" for u in used[-12:]) + "\n") if used else ""
         return f"""この小説の第{n}章の、チャンク{i}/{num_chunks}を書いてください。
 
 【スタイル見本・必ずこの文体で書く】
@@ -231,7 +261,7 @@ CANON（確定事実）：
 13. 「……」はこの章全体で2回までにすること。間や沈黙を「……」で表す書き方を繰り返さないこと。間は句点・読点・短い動作や台詞で表すこと。
 14. 比喩（まるで／〜ように・ような・ようだ／みたい／あたかも／ごとく）は使いすぎないこと。1000字あたり3.0以下に収め、「まるで」と「みたい」の同型の繰り返しは4回以下にすること。比喩を重ねず、動作・台詞・具体物で書くこと。
 
-今すぐこのチャンクの本文を書いてください。本文は必ず日本語で書いてください。
+{used_block}今すぐこのチャンクの本文を書いてください。本文は必ず日本語で書いてください。
 """
 
     best_full = None
@@ -250,6 +280,7 @@ CANON（確定事実）：
                 result = call_writer(prompt)
                 result = trim_to_sentence(result)
                 ratio = dialogue_ratio(result)
+                reps = repeated_sentences(result, accumulated)
                 if best_chunk is None:
                     best_chunk, best_ratio = result, ratio
                 elif len(result) < 0.7 * len(best_chunk):
@@ -258,8 +289,11 @@ CANON（確定事実）：
                     # 採用は「セリフ比」で決める。2026-10-06 修正: 以前は最長のものを採っていた
                     # ため、セリフの薄い再試行が勝ち、章全体が 43.7% まで落ちた（実測）。
                     best_chunk, best_ratio = result, ratio
-                print(f"    セリフ{ratio*100:.0f}% 長さ{len(result)}字 -> {'OK' if ratio >= DIALOGUE_GATE else '再試行'}", file=sys.stderr)
-                if ratio >= DIALOGUE_GATE:
+                if reps:
+                    print(f"    前と丸かぶりの文 {len(reps)}件（例: {reps[0]}）→ 書き直し", file=sys.stderr)
+                print(f"    セリフ{ratio*100:.0f}% 長さ{len(result)}字 -> "
+                      f"{'OK' if ratio >= DIALOGUE_GATE and not reps else '再試行'}", file=sys.stderr)
+                if ratio >= DIALOGUE_GATE and not reps:
                     break
             chunk_results.append(best_chunk)
             accumulated = "\n".join(chunk_results)

@@ -427,6 +427,20 @@ def llm_parse(raw: str) -> dict:
 
 # --------------------------------------------------------------------- main
 
+def clean_punct(text: str, log: list) -> str:
+    """置換でできた記号の傷を消す（文頭の読点・連続した句読点）。
+
+    2026-10-06 実測: 「……」を「、」に置換した結果、「、低いと思う」「。。。。」「？。。」の
+    ような壊れた箇所が本文に5つ残った（未修復の原稿には0箇所）。置換の直後に必ず通す。
+    """
+    before = text
+    text = re.sub(r"([「『（])\s*[、。]+", r"\1", text)                  # 文頭の読点・句点
+    text = re.sub(r"[、。]{2,}", lambda m: "。" if "。" in m.group(0) else "、", text)
+    if text != before:
+        log.append("置換でできた記号の傷（文頭の読点・連続句読点）を整えた")
+    return text
+
+
 def safe_fix(name: str, fn, text: str, log: list) -> str:
     """1つの修復が例外で落ちても、他の修復と成果を失わない。
 
@@ -481,7 +495,9 @@ def main() -> int:
     for rnd in range(1, max(1, args.max_rounds) + 1):
         print(f"\n-- 修復ラウンド {rnd}/{args.max_rounds} -- 種類: {', '.join(sorted(kinds))}")
         if "symbol" in kinds:
-            cur = safe_fix("symbol", lambda t, lg: fix_brackets(cut_symbols(t, lg), lg), cur, log)
+            cur = safe_fix("symbol",
+                           lambda t, lg: clean_punct(fix_brackets(cut_symbols(t, lg), lg), lg),
+                           cur, log)
         if "dup" in kinds:
             cur = safe_fix("dup", drop_dup_sentences, cur, log)
         if "metaphor" in kinds and not measure(cur, lo, hi)["metaphor_ok"]:
