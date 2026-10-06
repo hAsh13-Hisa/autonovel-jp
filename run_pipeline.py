@@ -470,6 +470,9 @@ def _trial_fail(state: dict, ch_file: Path, gate_out: str,
     fail_lines = [l.strip() for l in gate_out.splitlines()
                   if "[FAIL]" in l or "[WARN]" in l or l.strip().startswith("RESULT")]
     fix_lines = [l.strip() for l in repair_out.splitlines() if l.strip().startswith("- ")]
+    err_lines = [l.strip() for l in repair_out.splitlines()
+                 if "例外" in l or l.strip().startswith("Traceback")
+                 or "Error" in l or "error:" in l][:3]
 
     body = [
         "# 試作1章テスト：不合格",
@@ -487,8 +490,13 @@ def _trial_fail(state: dict, ch_file: Path, gate_out: str,
     body += ([f"- {l}" for l in fail_lines] if fail_lines
              else ["- （ゲートの出力を取得できませんでした）"])
     body += ["", f"## 修復で直そうとした箇所（{len(fix_lines)}件）", ""]
-    body += ([f"- {l}" for l in fix_lines[:6]] if fix_lines
-             else ["- （修復は走っていません）"])
+    body += [f"- {l}" for l in fix_lines[:6]] if fix_lines else (
+        [f"- 修復が例外で止まりました: {l}" for l in err_lines]
+        if err_lines else
+        ["- （修復は走りましたが、直せた箇所は0件）",
+         f"- 修復の出力末尾: {repair_out.strip().splitlines()[-1][:120]}"]
+        if repair_out.strip() else
+        ["- （修復は走っていません）"])
     body += [
         "",
         "## 次にやること（設計側を直す）",
@@ -548,7 +556,7 @@ def trial_chapter_test(state: dict, total: int) -> tuple:
             rep = uv_run(f"repair_chapter.py chapters/ch_{ch:02d}.md "
                          f"--out chapters/ch_{ch:02d}_repaired.md "
                          f'--band "{CHAPTER_GATE_BAND}"', timeout=REPAIR_TIMEOUT)
-            repair_out = rep.stdout or ""
+            repair_out = (rep.stdout or "") + "\n" + (rep.stderr or "")
             repaired = ch_file.with_name(f"ch_{ch:02d}_repaired.md")
             if repaired.exists():
                 gate2 = run_tool(gate_cmd + f"chapters/ch_{ch:02d}_repaired.md", timeout=180)

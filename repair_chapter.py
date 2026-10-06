@@ -25,6 +25,7 @@ import argparse
 import math
 import re
 import sys
+import traceback
 from collections import Counter
 from pathlib import Path
 
@@ -260,8 +261,12 @@ def rewrite_metaphor(text: str, log: list, max_edits: int = 20) -> str:
         idx = text.find(target)
         if idx < 0:
             continue
-        prev_s = text[:idx].split("。")[-2].strip() if idx >= 0 else ""
-        next_s = text[idx + len(target):].split("。")[0].strip() if idx >= 0 else ""
+        # 直前・直後の文脈（プロンプトに添える）。話者が章の1文目にいる場合、text[:idx] に
+        # 「。」が1つも無く `split("。")[-2]` が IndexError になる（2026-10-06 実測: これで
+        # 修復が丸ごと落ち、機械的に直せていた記号の修正まで失われた）。
+        prev_parts = text[:idx].split("。")
+        prev_s = prev_parts[-2].strip() if len(prev_parts) >= 2 else ""
+        next_s = text[idx + len(target):].split("。")[0].strip()
         try:
             raw = llm.call("revision",
                            REWRITE_PROMPT.format(prev=prev_s[-120:], target=target[:200],
@@ -422,6 +427,20 @@ def llm_parse(raw: str) -> dict:
 
 # --------------------------------------------------------------------- main
 
+def safe_fix(name: str, fn, text: str, log: list) -> str:
+    """1つの修復が例外で落ちても、他の修復と成果を失わない。
+
+    2026-10-06 実測: 比喩の書き換えが IndexError で落ち、**機械的に直せていた記号の修正まで
+    消えて**「修復0件」になり、試作1章が不合格になった（ゲートは検出するのに直す側が空）。
+    """
+    try:
+        return fn(text, log)
+    except Exception as exc:                     # noqa: BLE001
+        traceback.print_exc()
+        log.append(f"修復「{name}」で例外（{type(exc).__name__}: {exc}）— ここは飛ばして続けます")
+        return text
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="章ゲートに落ちた章を直す（破棄しない）")
     ap.add_argument("path", help="章ファイル")
@@ -462,14 +481,13 @@ def main() -> int:
     for rnd in range(1, max(1, args.max_rounds) + 1):
         print(f"\n-- 修復ラウンド {rnd}/{args.max_rounds} -- 種類: {', '.join(sorted(kinds))}")
         if "symbol" in kinds:
-            cur = cut_symbols(cur, log)
-            cur = fix_brackets(cur, log)
+            cur = safe_fix("symbol", lambda t, lg: fix_brackets(cut_symbols(t, lg), lg), cur, log)
         if "dup" in kinds:
-            cur = drop_dup_sentences(cur, log)
+            cur = safe_fix("dup", drop_dup_sentences, cur, log)
         if "metaphor" in kinds and not measure(cur, lo, hi)["metaphor_ok"]:
-            cur = rewrite_metaphor(cur, log)
+            cur = safe_fix("metaphor", rewrite_metaphor, cur, log)
         if "insert" in kinds and not args.no_insert and not measure(cur, lo, hi)["min_window_ok"]:
-            cur = insert_dialogue(cur, log)
+            cur = safe_fix("insert", insert_dialogue, cur, log)
         m = measure(cur, lo, hi)
         show(f"round{rnd}", m)
         if all_ok(m):
