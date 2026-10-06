@@ -835,6 +835,10 @@ def parse_panel_consensus(panel_path: Path) -> list[dict]:
 REVISION_GATES = os.environ.get("AUTONOVEL_REVISION_GATES", "1") != "0"
 # 整合ゲート（消えた人物・設定矛盾・声の逸脱・伏線の放置）。0 で無効化。
 CONSISTENCY = os.environ.get("AUTONOVEL_CONSISTENCY", "1") != "0"
+# 整合チェック（judge モデル＝高い）を改訂サイクルごとに回すか。
+# 既定は「最初のサイクルと最後のサイクルの2回」に絞る。実測 1回 約27,000トークンで、
+# 最大6サイクル×1章＝162,000トークン/章が、54,000に減る（2026-10-06）。
+CONSISTENCY_EVERY_CYCLE = os.environ.get("AUTONOVEL_CONSISTENCY_EVERY_CYCLE", "0") != "0"
 CONSISTENCY_TIMEOUT = int(os.environ.get("AUTONOVEL_CONSISTENCY_TIMEOUT", "900"))
 # 一対比較（Elo）で章の採否を決める。点が下がった改訂を、両順序で勝てば採用する。
 ELO_DECIDE = os.environ.get("AUTONOVEL_ELO_DECIDE", "1") != "0"
@@ -1038,7 +1042,8 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
 
             # 整合の指摘（設定矛盾・声の逸脱・伏線の放置）も同じブリーフに足す。
             # 審査は judge モデルで1章1回（約1分半）。指摘が無ければ何も足さない。
-            if CONSISTENCY:
+            if CONSISTENCY and (CONSISTENCY_EVERY_CYCLE
+                                or cycle == start_cycle or cycle == max_cycles):
                 step(f"Checking consistency of Ch {ch_num} (judge model)...")
                 cons_brief = BRIEFS_DIR / f"ch{ch_num:02d}_cycle{cycle}_consistency.md"
                 uv_run(f"verify_consistency.py --llm --chapters {ch_num} "

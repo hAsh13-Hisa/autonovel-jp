@@ -467,6 +467,10 @@ JSON_COMPACT_RULES = (
     "1. 出力は **JSON オブジェクト1つだけ**。前後に説明・あいさつ・コードフェンスを書かない。\n"
     "2. `overall_score` と `lore_score`（全体評価なら `novel_score`）は **JSON の先頭**に書く。\n"
     "3. 各文字列は短く（おおむね40文字以内）。長文の講評・同じ内容の繰り返しは書かない。\n"
+    "4. 各項目は **1文だけ**（60文字以内）。引用は短く切り、引用の説明・前置き・総評・"
+    "「〜について述べます」のような導入を書かない。\n"
+    "5. 出力全体で **4,000トークンを超えないこと**。長くなるほど役に立たない："
+    "採点と、直すべき1点だけを書く。\n"
 )
 
 # 判定の出力上限。**実測（2026-10-06）: kimi-k3 の自然な出力量は約12,000トークン**。
@@ -891,13 +895,16 @@ def evaluate_chapter(chapter_num):
 
     # Load previous chapter tail
     prev_text = load_chapter(chapter_num - 1) if chapter_num > 1 else "(first chapter)"
-    prev_tail = prev_text[-3000:] if len(prev_text) > 3000 else prev_text
+    prev_tail = prev_text[-1200:] if len(prev_text) > 1200 else prev_text
 
     prompt = CHAPTER_PROMPT.format(
         voice=layers["voice"],
-        world=layers["world"][:4000],  # truncate world bible
-        characters=layers["characters"],
-        canon=layers["canon"],
+        # 費用対策（2026-10-06 実測）: 章判定の入力は約21,000トークンあり、その大半が設定資料。
+        # 文学的な判定に効くのは「声・登場人物・この章のアウトライン」で、世界観とカノンの
+        # 違反検出は整合チェック（verify_consistency.py）が別に担当している（二重に払っていた）。
+        world=layers["world"][:1500],
+        characters=layers["characters"][:2800],
+        canon=layers["canon"][:2200],
         chapter_outline=chapter_outline,
         prev_chapter_tail=prev_tail,
         chapter_text=chapter_text,
