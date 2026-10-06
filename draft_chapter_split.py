@@ -13,7 +13,7 @@ by keeping every generation short enough that the model maintains dialogue.
 
 Usage: python draft_chapter_split.py 1
 """
-import sys, re, statistics
+import sys, re, os, statistics
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -23,15 +23,17 @@ import llm
 
 CHAPTERS_DIR = BASE_DIR / "chapters"
 
-CHUNK_TARGET = 1200      # target chars per chunk
+CHUNK_TARGET = int(os.environ.get("AUTONOVEL_CHUNK_TARGET", "1200"))  # target chars per chunk
 CHUNK_MIN = 1000
 CHUNK_MAX = 1500
 DIALOGUE_GATE = 0.50     # チャンクごとの再試行ライン（会話の文字割合。ゲートの合格線と揃える）
 CHAPTER_MW_OK = 0.30     # 章の早期打ち切りライン（最も薄い500字区画の会話割合）
-#   2026-10-06 実測: 会話の文字割合は 全体 43.7〜50.2%／最も薄い500字区画 29.8〜35.4%。
+#   2026-10-06 実測: 会話の文字割合は 全体 43.7〜52.3%／最も薄い500字区画 22〜35%。
 #   以前は行ベースで測っていたため「55%」が達成不能〜別物の数字になっていた。
-MAX_CHUNK_RETRY = 3
-MAX_CHAPTER_RETRY = 3
+MAX_CHUNK_RETRY = int(os.environ.get("AUTONOVEL_CHUNK_RETRY", "3"))
+MAX_CHAPTER_RETRY = int(os.environ.get("AUTONOVEL_CHAPTER_RETRY", "3"))
+#   2026-10-06 実測: 1章あたりの書き手呼び出しは 3回試行×4〜5チャンク×2再試行＝最大26回で
+#   約40〜53万トークン。24章だと週の枠を超える。試行を1回に絞ると 8〜12万トークン/章。
 TARGET_CHAPTER = 6000    # target total chapter chars
 
 
