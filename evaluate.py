@@ -895,16 +895,17 @@ def evaluate_chapter(chapter_num):
 
     # Load previous chapter tail
     prev_text = load_chapter(chapter_num - 1) if chapter_num > 1 else "(first chapter)"
-    prev_tail = prev_text[-1200:] if len(prev_text) > 1200 else prev_text
+    prev_tail = prev_text[-3000:] if len(prev_text) > 3000 else prev_text
 
     prompt = CHAPTER_PROMPT.format(
         voice=layers["voice"],
-        # 費用対策（2026-10-06 実測）: 章判定の入力は約21,000トークンあり、その大半が設定資料。
-        # 文学的な判定に効くのは「声・登場人物・この章のアウトライン」で、世界観とカノンの
-        # 違反検出は整合チェック（verify_consistency.py）が別に担当している（二重に払っていた）。
-        world=layers["world"][:1500],
-        characters=layers["characters"][:2800],
-        canon=layers["canon"][:2200],
+        # 2026-10-06 実測: ここを world[:1500]/characters[:2800]/canon[:2200] に削ると、
+        # 同じ章の判定が 5.7 → 4.7 に下がった（同じ入力で2回とも4.7＝ぶれではない）。
+        # 判定の目盛りが動くと採否の線（4.0）がずれるので、**入力の量は元に戻した**。
+        # 費用は「整合チェックの回数」と「出力の長さ」で取る。
+        world=layers["world"][:4000],  # truncate world bible
+        characters=layers["characters"],
+        canon=layers["canon"],
         chapter_outline=chapter_outline,
         prev_chapter_tail=prev_tail,
         chapter_text=chapter_text,
