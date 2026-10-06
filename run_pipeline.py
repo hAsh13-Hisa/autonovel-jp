@@ -460,6 +460,10 @@ def run_foundation(state: dict) -> dict:
 TRIAL_TEST = os.environ.get("AUTONOVEL_TRIAL_TEST", "1") != "0"
 TRIAL_STOP = os.environ.get("AUTONOVEL_TRIAL_STOP", "1") != "0"
 TRIAL_ONLY = os.environ.get("AUTONOVEL_TRIAL_ONLY", "0") != "0"
+# 段階実行: 1回の実行で何章まで書くか（0=残り全部）。2026-10-06 Hisa要望「大量消費の前に
+# 段階実行（小さく実測→続行判断）」のためのノブ。章ごとに保存されるので、止めても同じ
+# コマンドで続きから進む。
+MAX_CHAPTERS = int(os.environ.get("AUTONOVEL_MAX_CHAPTERS", "0"))
 TRIAL_BRIEF = BASE_DIR / os.environ.get(
     "AUTONOVEL_TRIAL_BRIEF", "briefs/trial_chapter_brief.md")
 
@@ -608,10 +612,21 @@ def run_drafting(state: dict) -> dict:
         step("試作1章テストだけを実行しました（AUTONOVEL_TRIAL_ONLY=1）")
         return state
     start_chapter = state.get("chapters_drafted", 0) + 1
+    if MAX_CHAPTERS:
+        stage_end = min(total, start_chapter + MAX_CHAPTERS - 1)
+        step(f"段階実行: 今回の範囲は 第{start_chapter}章〜第{stage_end}章"
+             f"（AUTONOVEL_MAX_CHAPTERS={MAX_CHAPTERS}）")
 
     CHAPTERS_DIR.mkdir(exist_ok=True)
 
     for ch in range(start_chapter, total + 1):
+        if MAX_CHAPTERS and ch > start_chapter + MAX_CHAPTERS - 1:
+            save_state(state)
+            banner(f"段階実行: {MAX_CHAPTERS}章ぶん書き終えたので一度止めます", "-")
+            print(f"  書けた章: 第{state.get('chapters_drafted')}章まで / 全{total}章")
+            print("  続けるには同じコマンドをもう一度実行してください（書けた章は保存済み）。")
+            print("  全章まで一気に進めるなら AUTONOVEL_MAX_CHAPTERS=0 を付けて実行します。")
+            sys.exit(0)
         if quota_stop_requested():
             stop_for_quota()
         banner(f"Drafting Chapter {ch}/{total}", "-")
