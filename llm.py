@@ -230,6 +230,22 @@ def call(
         "temperature": temperature,
         "messages": [{"role": "user", "content": prompt}],
     }
+    # 生成パラメータ（2026-10-06 実測・ollama.com の OpenAI 互換エンドポイント）:
+    #  - temperature / top_p は**効かない**（temperature=0.0 でも4回とも別文・共通の頭7字）。
+    #    → ROLE_TEMPERATURE も実質的に装飾。送っても害はないので残す。
+    #  - 反復の抑制は**効く**。ただし名前が2系統ある:
+    #      frequency_penalty（OpenAI 互換の名前）… 効く（実測: 同じ語の反復 14→9回）
+    #      repeat_penalty（Ollama の名前）… 単体では効かない。**options の中**に入れると効く（14→8回）
+    #    → `repetition_penalty` という名前はどちらの層にも無いので効かない。
+    freq = os.environ.get("AUTONOVEL_FREQUENCY_PENALTY", "").strip()
+    if freq:
+        payload["frequency_penalty"] = float(freq)
+    top_p = os.environ.get("AUTONOVEL_TOP_P", "").strip()
+    if top_p:
+        payload["top_p"] = float(top_p)
+    repeat = os.environ.get("AUTONOVEL_REPEAT_PENALTY", "").strip()
+    if repeat:
+        payload["options"] = {"repeat_penalty": float(repeat)}
     if system:
         payload["messages"].insert(0, {"role": "system", "content": system})
     # Hybrid "thinking" models (e.g. glm-5.3) burn the completion budget on
