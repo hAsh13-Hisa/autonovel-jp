@@ -469,7 +469,10 @@ JSON_COMPACT_RULES = (
     "3. 各文字列は短く（おおむね40文字以内）。長文の講評・同じ内容の繰り返しは書かない。\n"
 )
 
-JUDGE_MAX_TOKENS = int(os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS", "6000"))
+# 判定の出力上限。**実測（2026-10-06）: kimi-k3 の自然な出力量は約12,000トークン**。
+# 6,000 にすると必ず途中で切れ、上限を上げて2回呼ぶことになる（＝1回の評価に2回分の
+# 料金。実測 76,000トークン）。自然な大きさを確保して**1回で終わらせる**のが安い。
+JUDGE_MAX_TOKENS = int(os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS", "16000"))
 JUDGE_MAX_TOKENS_ESCALATED = int(
     os.environ.get("AUTONOVEL_JUDGE_MAX_TOKENS_ESCALATED", "32000"))
 # 同じ入力の評価は再利用する（判定モデルを呼ばない）。実測: 1回 約44,000 トークン。
