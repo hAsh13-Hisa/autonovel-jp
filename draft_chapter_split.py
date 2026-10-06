@@ -26,7 +26,10 @@ CHAPTERS_DIR = BASE_DIR / "chapters"
 CHUNK_TARGET = 1200      # target chars per chunk
 CHUNK_MIN = 1000
 CHUNK_MAX = 1500
-DIALOGUE_GATE = 0.55     # per-chunk and final min-window dialogue ratio
+DIALOGUE_GATE = 0.50     # チャンクごとの再試行ライン（会話の文字割合。ゲートの合格線と揃える）
+CHAPTER_MW_OK = 0.30     # 章の早期打ち切りライン（最も薄い500字区画の会話割合）
+#   2026-10-06 実測: 会話の文字割合は 全体 43.7〜50.2%／最も薄い500字区画 29.8〜35.4%。
+#   以前は行ベースで測っていたため「55%」が達成不能〜別物の数字になっていた。
 MAX_CHUNK_RETRY = 3
 MAX_CHAPTER_RETRY = 3
 TARGET_CHAPTER = 6000    # target total chapter chars
@@ -99,22 +102,34 @@ def character_names(char_text):
 
 
 def dialogue_ratio(text):
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    if not lines:
+    """会話（「」で囲まれた部分）が本文の何割か（**文字ベース**）。
+
+    2026-10-06 修正: 以前は「『」を含む行の割合」で見ていたため、実測で**同じ本文が
+    行ベース 71.7%／文字ベース 50.2%** と食い違っていた。ドラフターは 55% を超えたと
+    判断して早々に打ち切り、章の会話量が仕様（約70%）より低いまま止まっていた。
+    ゲートの「セリフ比(文字ベース)」と同じものさしに揃える。
+    """
+    body = text.strip()
+    if not body:
         return 0.0
-    return sum(1 for l in lines if "「" in l or "」" in l) / len(lines)
+    return len("".join(re.findall(r"「[^」]*」", body))) / len(body)
 
 
 def min_window_ratio(text, win=500):
-    body = "\n".join(l for l in text.split("\n") if not l.strip().startswith("#"))
-    ratios = []
+    """500字ごとの区画で、会話が最も薄い区画の割合（**文字ベース**）。
+
+    2026-10-06 修正: 以前は (1) 行の割合で見ており、(2) 端の半端な区画も判定に入れていた。
+    そのため末尾が地の文で終わる章は**必ず 0%** になり（実測: 会話の無い最長区間が122字の
+    章でも 0%）、ドラフターの章の採否も誤っていた。
+    """
+    body = "\n".join(l for l in text.split("\n") if not l.strip().startswith("#")).strip()
+    vals = []
     for i in range(0, len(body), win):
         seg = body[i:i + win]
-        sl = [l.strip() for l in seg.split("\n") if l.strip()]
-        if not sl:
+        if len(seg) < win * 0.5:          # 端の半端な区画は判定に入れない
             continue
-        ratios.append(sum(1 for l in sl if "「" in l or "」" in l) / len(sl))
-    return min(ratios) if ratios else 0.0
+        vals.append(dialogue_ratio(seg))
+    return min(vals) if vals else 0.0
 
 
 def trim_to_sentence(text):
@@ -235,9 +250,14 @@ CANON（確定事実）：
                 result = call_writer(prompt)
                 result = trim_to_sentence(result)
                 ratio = dialogue_ratio(result)
-                if best_chunk is None or len(result) > len(best_chunk):
-                    best_chunk = result
-                    best_ratio = ratio
+                if best_chunk is None:
+                    best_chunk, best_ratio = result, ratio
+                elif len(result) < 0.7 * len(best_chunk):
+                    pass          # 短すぎる案は採らない（章の文字数が痩せるため）
+                elif (ratio, len(result)) > (best_ratio, len(best_chunk)):
+                    # 採用は「セリフ比」で決める。2026-10-06 修正: 以前は最長のものを採っていた
+                    # ため、セリフの薄い再試行が勝ち、章全体が 43.7% まで落ちた（実測）。
+                    best_chunk, best_ratio = result, ratio
                 print(f"    セリフ{ratio*100:.0f}% 長さ{len(result)}字 -> {'OK' if ratio >= DIALOGUE_GATE else '再試行'}", file=sys.stderr)
                 if ratio >= DIALOGUE_GATE:
                     break
@@ -251,7 +271,7 @@ CANON（確定事実）：
         if best_full is None or mw > best_mw:
             best_full = full
             best_mw = mw
-        if mw >= DIALOGUE_GATE:
+        if mw >= CHAPTER_MW_OK:
             break
 
     out = CHAPTERS_DIR / f"ch_{n:02d}.md"

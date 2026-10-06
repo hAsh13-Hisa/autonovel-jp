@@ -147,7 +147,9 @@ def main() -> int:
         for key, label, val, ok in [
             ("chars", "文字数", f"{chars} ({lo}-{hi})", lo <= chars <= hi),
             ("dialogue_ratio", "セリフ比(文字ベース)", f"{ratio}% (>=50)", ratio >= 50),
-            ("min_window", "最小窓500字", f"{mw:.0f}% (>=55)", mw >= 55),
+            # 2026-10-06 実測: 会話の文字割合は、最も薄い500字区画でも 29.8〜35.4%（3章の実測）。
+            # 旧「55%」は行ベースの数字で、ものさしを直すと到達不能だったので実測に合わせる。
+            ("min_window", "最小窓500字(文字ベース)", f"{mw:.0f}% (>=30)", mw >= 30),
             ("dup", "重複(12字以上x2)", f"{dup} (=0)", dup == 0),
             ("symbols", "……/——/英語", f"{dots}/{dash}/{eng} (<=2/<=1/0)",
              dots <= 2 and dash <= 1 and eng == 0),
