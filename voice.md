@@ -1,169 +1,163 @@
-# Voice Profile
+# 文体プロファイル（Voice Profile）
 
-This file has two parts:
-1. **Guardrails** -- universal rules to avoid AI-generated slop. These
-   apply to ALL voices and are non-negotiable.
-2. **Voice Identity** -- the specific voice for THIS novel. Generated
-   during the foundation phase. Could be anything: dense and mythic,
-   spare and brutal, warm and whimsical. The voice emerges from the
-   story's needs.
+このファイルは2部構成。
+
+1. **Part 1: ガードレール** — 生成AIっぽさ（スロップ）を避けるための、全作品共通の規則。
+   どんな声にも当てはまり、例外はない。
+2. **声の定義（作品ごと）** — この作品だけの声。世界観づくりの段階で決める。濃密で神話的でも、
+   乾いて残酷でも、温かく奇抜でもよい。声は物語の要求から立ち上がる。
 
 ---
 
-## Part 1: Guardrails (permanent, all novels)
+## Part 1: ガードレール（全作品共通・恒久）
 
-These are the cliff edges. Stay away from them regardless of voice.
+ここは崖っぷち。どんな声であれ、近づかない。
 
-### Tier 1: Banned words -- kill on sight
+### 第一層：禁止語 — 見つけたら即座に書き直す
 
-These are statistically overrepresented in LLM output vs. human writing.
-If one appears, rewrite the sentence. No exceptions.
+人間の文章に比べて **LLM の出力に統計的に出過ぎる語**。1つでも出たら、その文を書き直す。例外はない。
 
-| Kill this         | Use instead                                    |
-|-------------------|------------------------------------------------|
-| delve             | dig into, examine, look at                     |
-| utilize           | use                                            |
-| leverage (verb)   | use, take advantage of                         |
-| facilitate        | help, enable, make possible                    |
-| elucidate         | explain, clarify                               |
-| embark            | start, begin                                   |
-| endeavor          | effort, try                                    |
-| encompass         | include, cover                                 |
-| multifaceted      | complex, varied                                |
-| tapestry          | (describe the actual thing)                    |
-| testament to      | shows, proves, demonstrates                    |
-| paradigm          | model, approach, framework                     |
-| synergy           | (delete the sentence and start over)           |
-| holistic          | whole, complete, full-picture                  |
-| catalyze          | trigger, cause, spark                          |
-| juxtapose         | compare, contrast, set against                 |
-| nuanced (filler)  | (cut it -- if it's nuanced, show how)          |
-| realm             | area, field, domain                            |
-| landscape (metaphorical) | field, space, situation                 |
-| myriad            | many, lots of                                  |
-| plethora          | many, a lot                                    |
+| 使わない | 代わりに |
+|---|---|
+| delve | dig into, examine, look at |
+| utilize | use |
+| leverage（動詞） | use, take advantage of |
+| facilitate | help, enable, make possible |
+| elucidate | explain, clarify |
+| embark | start, begin |
+| endeavor | effort, try |
+| encompass | include, cover |
+| multifaceted | complex, varied |
+| tapestry | （実際の物を描写する） |
+| testament to | shows, proves, demonstrates |
+| paradigm | model, approach, framework |
+| synergy | （その文を消して書き直す） |
+| holistic | whole, complete, full-picture |
+| catalyze | trigger, cause, spark |
+| juxtapose | compare, contrast, set against |
+| nuanced（中身の無い使い方） | （削る。nuanced なら、そう見せろ） |
+| realm | area, field, domain |
+| landscape（比喩として） | field, space, situation |
+| myriad | many, lots of |
+| plethora | many, a lot |
 
-### Tier 2: Suspicious in clusters
+**日本語の禁止語は別の場所にある。** 上の表は原典（英語）のまま。日本語の AI 定型句
+（「〜と言っても過言ではない」「〜の一端」「心が躍る」など）は `evaluate.py` のスロップ
+採点器が**日本語の語**として別途持っている（第一層の日本語リスト）。考え方は同じで、
+「統計的に出過ぎる語」を機械が減点する。
 
-Fine alone. Three in one paragraph = rewrite that paragraph.
+### 第二層：群れで出たら疑う
+
+単独なら問題ない。**1つの段落に3つ出たら、その段落を書き直す。**
 
 robust, comprehensive, seamless, cutting-edge, innovative, streamline,
 empower, foster, enhance, elevate, optimize, pivotal, intricate,
-profound, resonate, underscore, harness, navigate (metaphorical),
+profound, resonate, underscore, harness, navigate（比喩として）,
 cultivate, bolster, galvanize, cornerstone, game-changer, scalable
 
-### Tier 3: Filler phrases -- delete on sight
+### 第三層：中身のない定型句 — 見つけたら消す
 
-These add zero information. The sentence is always better without them.
+情報を1つも足していない。消せば必ず文が良くなる。
 
-- "It's worth noting that..." -> just state it
-- "It's important to note that..." -> just state it
-- "Importantly, ..." / "Notably, ..." / "Interestingly, ..." -> just state it
-- "Let's dive into..." / "Let's explore..." -> start with the content
-- "As we can see..." -> they can see
-- "Furthermore, ..." / "Moreover, ..." / "Additionally, ..." -> and, also, or just start
-- "In today's [fast-paced/digital/modern] world..." -> delete the clause
-- "At the end of the day..." -> delete
-- "It goes without saying..." -> then don't say it
-- "When it comes to..." -> just talk about the thing
-- "One might argue that..." -> argue it or don't
-- "Not just X, but Y" -> restructure (the #1 LLM rhetorical crutch)
+- 「注目すべきは…」→ そのまま言い切る
+- 「重要なのは…」→ そのまま言い切る
+- 「興味深いことに…」「特筆すべきは…」→ そのまま言い切る
+- 「さあ、見ていきましょう」→ 中身から始める
+- 「ご覧のとおり…」→ 読者に見せてから言う
+- 「さらに」「加えて」「そのうえ」→ 接続詞を減らし、主語や動作から始める
+- 「現代の〜な社会において…」→ その節ごと消す
+- 「結局のところ…」→ 消す
+- 「言うまでもなく…」→ なら言うな
+- 「〜ということになると…」→ その物事をそのまま語る
+- 「〜と主張する人もいる」→ 主張するか、しないか
+- 「X だけでなく Y も」→ 組み直す（LLM が最も多用する修辞の型）
 
-### Structural slop patterns
+### 構造のクセ
 
-These are the shapes that betray machine origin. Avoid them in any voice.
+機械が書いたと露見する「かたち」。どの声でも避ける。
 
-**Paragraph template machine**: Don't repeat the same paragraph
-structure (topic sentence -> elaboration -> example -> wrap-up).
-Vary it. Sometimes the point comes last. Sometimes a paragraph is
-one sentence. Sometimes three long ones in a row.
+**段落テンプレートの機械化**: 同じ段落構造（話題文 → 敷衍 → 例 → まとめ）を繰り返すな。
+変化させろ。要点が最後に来る段落があっていい。1文だけの段落があっていい。
+長い文が3つ続く段落があっていい。
 
-**Sentence length uniformity**: If every sentence is 15-25 words,
-it reads as synthetic. Mix in fragments. And long, winding,
-clause-heavy sentences that carry the reader through a thought
-the way a river carries a leaf. Then a short one.
+**文の長さの均一**: どの文も15〜25語だと、合成物として読まれる。断片を混ぜる。
+川が葉を運ぶように、節を重ねた長い文で思考を運ぶ。**そのあとに短い一文を置く。**
 
-**Transition word addiction**: If consecutive paragraphs start with
-"However," "Furthermore," "Additionally," "Moreover," "Nevertheless"
--- rewrite. Start with the subject. Start with action. Start with
-dialogue. Start with a sense detail.
+**接続詞の中毒**: 連続する段落が「しかし」「さらに」「加えて」「そのうえ」「とはいえ」で
+始まっていたら書き直す。**主語で始める。動作で始める。台詞で始める。感覚の細部で始める。**
 
-**Symmetry addiction**: Don't balance everything. Three pros, three
-cons, five steps -- that's a tell. Real writing is lumpy. Some
-sections are long because they need to be. Some are two lines.
+**対称性の中毒**: 何もかも釣り合わせるな。長所3つ・短所3つ・手順5つ——それは痕跡。
+本物の文章は凸凹している。長い節は、長い必要があるから長い。2行で終わる節もある。
 
-**Hedge parade**: "may," "might," "could potentially," "it's possible
-that" -- pick one per page, max. State things or don't.
+**断定回避の行列**: 「かもしれない」「可能性がある」「〜ということも考えられる」——
+1ページに1つまで。言い切るか、言わないか。
 
-**Em dash overload**: One or two per page is fine. Five per paragraph
-is a dead giveaway. Use commas, parentheses, or two sentences instead.
+**ダッシュの使い過ぎ**: 1ページに1〜2個まで。1段落に5個は即バレ。
+読点・括弧・2文に分ける、で置き換える。
 
-**List abuse**: Prose, not bullets. If the scene calls for a list
-(a merchant's inventory, a spell's components), earn it. Don't
-default to bullet points because it's easy.
+**箇条書きの乱用**: 地の文で書け。場面が本当に箇条書きを要求するとき（商人の品書き、
+呪文の材料）だけ使う。楽だから箇条書きに逃げるな。
 
-### The smell test
+### 匂いのテスト
 
-After writing any passage, ask:
-- Read it aloud. Does it sound like a person talking?
-- Is there a single surprising sentence? Human writing surprises.
-- Does it say something specific? Could you swap the topic and the
-  words would still work? Specificity kills slop.
-- Would a reader think "AI wrote this"? If yes, rewrite.
+書き終えた段落ごとに自問する:
+
+- 音読してみて、人が喋っているように聞こえるか。
+- **驚かせる一文が1つはあるか。** 人間の文章は驚かせる。
+- **具体的なことを言っているか。** 話題を入れ替えても同じ文が成立するなら、それは空文。
+  具体性がスロップを殺す。
+- **読者に「AIが書いた」と思われないか。** 思われるなら書き直す。
 
 ---
 
-## Part 2: Voice Identity (generated per novel)
+## Part 2: 声の定義（作品ごとに生成）
 
-Everything below is discovered during the foundation phase.
-The agent proposes a voice that serves THIS story, writes exemplar
-passages, and calibrates against them throughout drafting.
+以下はすべて世界観づくり（foundation）の段階で決める。
+エージェントが**この物語に奉仕する声**を提案し、見本の段落を書き、執筆の間ずっとそれに合わせて校正する。
 
-### Tone
-<!-- Generated during foundation. Examples:
-     "Mythic and weighty, like stone tablets being read aloud."
-     "Warm, slightly breathless, like a traveler telling stories by firelight."
-     "Spare and cold. Sentences like knife cuts." -->
+### 声の基調（Tone）
+<!-- 世界観づくりで生成する。例:
+     「神話的で重い。石版を読み上げるように」
+     「温かく、少し息が速い。焚き火のそばで語る旅人のように」
+     「乾いて冷たい。刃物で切るような文」 -->
 
-### Sentence Rhythm
-<!-- Generated during foundation. Not rules -- tendencies.
-     "Long sentences for worldbuilding, short for violence."
-     "Dialogue is clipped. Narration flows." -->
+### 文のリズム（Sentence Rhythm）
+<!-- 世界観づくりで生成する。規則ではなく傾向。
+     「世界の説明には長い文、暴力には短い文」
+     「会話は切り詰める。地の文は流れる」 -->
 
-### Vocabulary Register
-<!-- Generated during foundation. The word-hoard for this world.
-     What does this world SOUND like? Anglo-Saxon blunt? Latinate
-     baroque? Colloquial modern? A mix? -->
+### 語彙の層（Vocabulary Register）
+<!-- 世界観づくりで生成する。この世界の語彙の蔵。
+     この世界は「どんな音」がするか。素朴で短い語か。飾り立てた外来語か。
+     現代の口語か。その混ぜ方か。 -->
 
-### POV and Tense
-<!-- Generated during foundation.
-     Third limited? First? Rotating? Omniscient?
-     Past tense? Present? Does it shift for effect? -->
+### 人称と時制（POV and Tense）
+<!-- 世界観づくりで生成する。
+     三人称限定か。一人称か。視点の交代はあるか。神の視点か。
+     過去形か現在形か。効果のために切り替えるか。 -->
 
-### Dialogue Conventions
-<!-- Generated during foundation.
-     Tags: "said" only? Action beats? No tags at all?
-     How do characters sound different from each other?
-     Subtext rules: do characters say what they mean? -->
+### 会話の作法（Dialogue Conventions）
+<!-- 世界観づくりで生成する。
+     話者表示は「言った」だけか。動作で示すか。表示なしもあるか。
+     人物ごとの喋り方はどう違うか。
+     含みの作り方——人物は本音を言うのか言わないのか。 -->
 
-### Exemplar Passages
-<!-- 3-5 paragraphs that ARE the voice. Written during foundation.
-     The agent calibrates every chapter against these.
-     These are the tuning fork. -->
+### 見本の段落（Exemplar Passages）
+<!-- 「これがこの声だ」と言える段落を3〜5つ。世界観づくりで書く。
+     エージェントは毎章これを基準に校正する。音叉（チューニングフォーク）にあたる。 -->
 
-### Anti-Exemplars
-<!-- 3-5 paragraphs showing what this voice is NOT.
-     Not the generic anti-slop stuff above -- specific to this novel.
-     "This is too flowery for our tone." "This is too modern." -->
+### 反例（Anti-Exemplars）
+<!-- この声ではないものを示す段落を3〜5つ。上の一般的なスロップではなく、
+     この作品に固有の反例。「この調子はうちには華美すぎる」「これは現代語すぎる」 -->
 
 ### 比喩の供給源（この作品の比喩はどこから取るか）
 
 <!-- ここは foundation で自動生成されない。生成後（書き始める前）に埋める。
      作品固有の語彙から取るのが要点。例:
-       「鏡・筆・字・光の語彙から取る。天候や季節からは取らない」
-       「潮・灯・紙・匂いから取る。星や月からは取らない」 -->
+       「手仕事・道具・身体の語彙から取る。天候や季節からは取らない」
+       「音・光・距離の語彙から取る。星や月からは取らない」 -->
 
-- 供給源: <!-- 例: 鏡・筆・字・光 -->
+- 供給源: <!-- 例: 手仕事・道具・身体 -->
 - 取らない領域: <!-- 例: 天候・季節・星 -->
 
 ### 比喩の予算（必須・全作品共通）

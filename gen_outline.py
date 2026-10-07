@@ -26,10 +26,12 @@ characters = (BASE_DIR / "characters.md").read_text()
 mystery = (BASE_DIR / "MYSTERY.md").read_text()
 craft = (BASE_DIR / "CRAFT.md").read_text()
 
-# Voice Part 2 only
+# Voice Part 2 only（見出しは「Part 2」でも「第○部」でも拾う。無ければ全文を使う）
 voice = (BASE_DIR / "voice.md").read_text()
 voice_lines = voice.split('\n')
-part2_start = next(i for i, l in enumerate(voice_lines) if 'Part 2' in l)
+part2_start = next((i for i, l in enumerate(voice_lines)
+                    if l.lstrip().startswith('#')
+                    and ('Part 2' in l or '第2部' in l)), 0)
 voice_part2 = '\n'.join(voice_lines[part2_start:])
 
 prompt = f"""このファンタジー小説の章アウトラインの前半（第1章〜第12章）を構築してください。
