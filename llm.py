@@ -190,9 +190,11 @@ def _resolve(role: str):
 # 評価側は英語のままだった（2026-10-03 Hisa指摘: 「日本語指定しながら英語で返って来たなら切り捨ててよい」）。
 # JSONのキーだけ英語のままにする。
 JUDGE_LANGUAGE_NOTE = (
-    "The novel under review is written in JAPANESE. Write **every value** in the JSON "
-    "(gap / fix / note / reasons / weakest_dimension / top_3_improvements / free text) "
-    "in JAPANESE. Keep only the JSON keys in English. Never answer in English."
+    "【回答の言語】評価対象の小説は日本語で書かれている。JSON の**値**"
+    "（gap / fix / note / reasons / weakest_dimension / top_3_improvements / 自由記述）は"
+    "**すべて日本語**で書くこと。JSON のキーだけ英語のままにする。**英語で答えないこと。**"
+    "（2026-10-07 実測: この指示を英語文の中に置いていたときは、ローカルの12Bモデルが"
+    "半分の呼び出しで英語で返した。system 側も日本語にして効かせる。）"
 )
 
 

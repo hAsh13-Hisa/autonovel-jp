@@ -29,7 +29,7 @@ CHAPTERS_DIR = BASE_DIR / "chapters"
 def call_judge(prompt, max_tokens=4000):
     return llm.call_judge(
         prompt,
-        system='You are a literary editor comparing two chapters of the same novel. You pick the better one. You are not allowed to call it a tie. You quote specific passages to justify your choice. Respond with valid JSON only.',
+        system='あなたは同じ小説の2つの章を比べる文芸編集者です。より良い方を選びます。引き分けは認めません。選んだ理由は、本文から具体的な一節を引用して示します。返すのは有効な JSON だけ。',
         max_tokens=max_tokens,
         temperature=0.2,
     )

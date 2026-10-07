@@ -394,7 +394,7 @@ def load_all_chapters():
 def call_judge(prompt, max_tokens=2000):
     return llm.call_judge(
         prompt,
-        system='You are a literary critic and novel editor. You evaluate fiction with precision. Always respond with valid JSON. No markdown fences, no preamble -- just the JSON object.',
+        system='あなたは小説の編集者であり、文芸評論家です。小説を正確に評価します。返すのは有効な JSON オブジェクト1つだけ。前後に説明・あいさつ・コードフェンスを書かない。',
         max_tokens=max_tokens,
         temperature=0.3,
     )
