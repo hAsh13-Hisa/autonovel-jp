@@ -198,6 +198,57 @@ JUDGE_LANGUAGE_NOTE = (
 )
 
 
+def _is_local_ollama(base: str) -> bool:
+    """接続先がローカルの Ollama（OpenAI 互換ではなくネイティブ API を使うべき相手）か。
+
+    2026-10-07 実測: ローカルの Ollama は /v1（OpenAI 互換）経由だと **think も options も
+    無視する**。思考モデル（gemma4:12b）を判定に使うと、出力枠を全部「思考」に食われて
+    本文が空で返り、判定が毎回 JSON 解析に失敗して走行が止まった。
+    ネイティブ /api/chat なら think:false も options.num_ctx も効く。
+    """
+    forced = os.environ.get("AUTONOVEL_NATIVE_OLLAMA", "").strip().lower()
+    if forced in ("1", "true", "yes"):
+        return True
+    if forced in ("0", "false", "no"):
+        return False
+    return ":11434" in base or "host.docker.internal" in base
+
+
+def _call_native_ollama(role, model, base, system, prompt, max_tokens, temperature, options):
+    """ローカルの Ollama のネイティブ /api/chat で1回呼ぶ（think を切れる）。"""
+    root = base[:-3].rstrip("/") if base.endswith("/v1") else base
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+
+    opts = dict(options)
+    opts.setdefault("temperature", temperature)
+    opts["num_predict"] = max_tokens
+
+    body = {"model": model, "messages": messages, "stream": False, "options": opts}
+    # 思考モデルの事故を既定で防ぐ（本文が空になるのを避ける）。使いたい時だけ 1 にする。
+    body["think"] = os.environ.get("AUTONOVEL_OLLAMA_THINK", "").strip().lower() in ("1", "true", "yes")
+
+    headers = {"Content-Type": "application/json"}
+    key = os.environ.get("AUTONOVEL_API_KEY", "")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    resp = _post(f"{root}/api/chat", headers, body)
+    data = resp.json()
+    msg = data.get("message") or {}
+    text = (msg.get("content") or "").strip()
+    pe, ec = data.get("prompt_eval_count") or 0, data.get("eval_count") or 0
+    _log_usage(role, model, {"prompt_tokens": pe, "completion_tokens": ec, "total_tokens": pe + ec})
+    if not text and (msg.get("thinking") or ""):
+        sys.stderr.write(
+            "[llm] 警告: 本文が空で「思考」だけが返りました。"
+            "AUTONOVEL_OLLAMA_THINK を外して think を切ってください。\n"
+        )
+    return text
+
+
 def call(
     role: str,
     prompt: str,
@@ -270,6 +321,19 @@ def call(
         payload["reasoning_effort"] = reasoning_effort
 
     url = f"{base}/chat/completions"
+    if _is_local_ollama(base):
+        # ローカルの Ollama はネイティブ API で呼ぶ（/v1 は think も options も無視するため）
+        return _call_native_ollama(
+            role, model, base, system, prompt, max_tokens, temperature,
+            {
+                k: v for k, v in (
+                    ("repeat_penalty", float(repeat) if repeat else None),
+                    ("num_ctx", int(num_ctx) if num_ctx else None),
+                    ("frequency_penalty", float(freq) if freq else None),
+                    ("top_p", float(top_p) if top_p else None),
+                ) if v is not None
+            },
+        )
     resp = _post(url, headers, payload)
     data = resp.json()
     usage = data.get("usage") or {}

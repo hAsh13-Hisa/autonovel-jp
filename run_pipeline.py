@@ -635,17 +635,26 @@ def run_drafting(state: dict) -> dict:
         for attempt in range(1, MAX_CHAPTER_ATTEMPTS + 1):
             step(f"Attempt {attempt}/{MAX_CHAPTER_ATTEMPTS}")
 
-            # Draft（既定は fork 推奨の分割ドラフター。セリフ比率ゲート内蔵）
-            draft_result = uv_run(f"{DRAFTER} {ch}", timeout=DRAFT_TIMEOUT)
-            if draft_result.returncode != 0:
-                step(f"Draft failed (exit {draft_result.returncode}), retrying...")
-                continue
-
-            # Check the chapter file exists and has content
+            # 既存の原稿を使う（判定側の障害で止まったとき、書けた原稿を捨てないため）。
+            # 2026-10-07 の実測: ローカルの思考モデルを判定に使うと本文が空で返り、
+            # 「評価が解釈できない」で停止 → 再開すると**同じ章を丸ごと書き直して**いた。
+            # AUTONOVEL_REUSE_DRAFT=1 なら、ある原稿をそのまま評価から再開する。
             ch_file = CHAPTERS_DIR / f"ch_{ch:02d}.md"
-            if not ch_file.exists() or ch_file.stat().st_size < 100:
-                step("Chapter file missing or too short, retrying...")
-                continue
+            reuse = (os.environ.get("AUTONOVEL_REUSE_DRAFT", "") == "1"
+                     and ch_file.exists() and ch_file.stat().st_size >= 100)
+            if reuse:
+                step("既存の原稿をそのまま使います（AUTONOVEL_REUSE_DRAFT=1・作り直しません）")
+            else:
+                # Draft（既定は fork 推奨の分割ドラフター。セリフ比率ゲート内蔵）
+                draft_result = uv_run(f"{DRAFTER} {ch}", timeout=DRAFT_TIMEOUT)
+                if draft_result.returncode != 0:
+                    step(f"Draft failed (exit {draft_result.returncode}), retrying...")
+                    continue
+
+                # Check the chapter file exists and has content
+                if not ch_file.exists() or ch_file.stat().st_size < 100:
+                    step("Chapter file missing or too short, retrying...")
+                    continue
 
             word_count = len(ch_file.read_text().split())
             step(f"Drafted {word_count} words")
