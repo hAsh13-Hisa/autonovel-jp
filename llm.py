@@ -244,8 +244,17 @@ def call(
     if top_p:
         payload["top_p"] = float(top_p)
     repeat = os.environ.get("AUTONOVEL_REPEAT_PENALTY", "").strip()
-    if repeat:
-        payload["options"] = {"repeat_penalty": float(repeat)}
+    num_ctx = os.environ.get("AUTONOVEL_NUM_CTX", "").strip()
+    if repeat or num_ctx:
+        opts = {}
+        if repeat:
+            opts["repeat_penalty"] = float(repeat)
+        if num_ctx:
+            # ローカルの Ollama は Modelfile の num_ctx（既定 16384 など）で入力が切られる。
+            # judge の入力は約21,000トークンあるので、ローカルモデルを判定に使うときは
+            # これを実コンテキストまで上げる（例: 32768）。
+            opts["num_ctx"] = int(num_ctx)
+        payload["options"] = opts
     if system:
         payload["messages"].insert(0, {"role": "system", "content": system})
     # Hybrid "thinking" models (e.g. glm-5.3) burn the completion budget on
