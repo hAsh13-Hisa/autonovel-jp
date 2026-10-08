@@ -1281,7 +1281,10 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         
         max_review_rounds = 4
         revised_in_review = set()   # 同じ章を何周も直さない（講評が同じ章を指し続けても痩せるだけ）
+        stop_review_loop = False   # 直せる章が尽きたら止める（全編を読み直す費用が見合わない）
         for rnd in range(1, max_review_rounds + 1):
+            if stop_review_loop:
+                break
             banner(f"Opus Review Round {rnd}/{max_review_rounds}", "-")
             
             # Step 1: Generate the review
@@ -1343,7 +1346,9 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                     if ch_match:
                         ch_num = int(ch_match.group(1))
                         if ch_num in revised_in_review:
-                            step(f"Ch {ch_num} はこの講評ループで既に直した章なので飛ばします")
+                            step(f"Ch {ch_num} はこの講評ループで既に直した章なので、"
+                                 "ここで講評ループを終えます（全編を読み直す費用が見合わないため）")
+                            stop_review_loop = True
                         else:
                             revised_in_review.add(ch_num)
                             step(f"Revising Ch {ch_num} from review brief...")
