@@ -138,7 +138,14 @@ def main():
         sys.exit(1)
     
     if sys.argv[1] == "all":
-        chapters = list(range(1, 25))
+        # 章は実在するファイルから取る（上流は 1〜24 の決め打ちで、24章でない作品では
+        # 存在しない章を触ろうとして落ちる）。日本語版の他の道具と同じ扱いに揃える。
+        chapters = []
+        for p in sorted(CHAPTERS_DIR.glob("ch_*.md")):
+            m = re.match(r"ch_(\d+)\.md$", p.name)
+            if m:
+                chapters.append(int(m.group(1)))
+        chapters.sort()
     else:
         chapters = [int(sys.argv[1])]
     
