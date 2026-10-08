@@ -81,7 +81,14 @@ def clip(text: str, n: int = CLIP) -> str:
     return text if len(text) <= n else text[:n] + "\n［以下略］"
 
 
-def parse_choice(raw: str) -> dict:
+def parse_choice(raw: str, order: str = "old_first") -> dict:
+    """審査の答えを読む。
+
+    実測（2026-10-08）: 審査モデルはキー名を揺らす（`winner` ではなく `fix`）し、
+    値も「A」「B」ではなく「旧」「新」で答えることがある。ここを取りこぼすと
+    **本当は決まっていた勝敗が「判定できず」になる**（第23章で実際に起きた）。
+    日本語の「旧/新」は版の意味なので、スロット（A/B）への対応は順序で決まる。
+    """
     m = re.search(r"\{.*\}", raw or "", flags=re.S)
     if not m:
         return {"winner": "", "raw": (raw or "")[:300]}
@@ -89,22 +96,37 @@ def parse_choice(raw: str) -> dict:
         data = json.loads(m.group(0))
     except json.JSONDecodeError:
         return {"winner": "", "raw": (raw or "")[:300], "error": "JSONの解析に失敗"}
-    winner = str(data.get("winner", "")).strip().upper()[:1]
+    pick = ""
+    for key in ("winner", "fix", "better", "choice", "wins", "勝ち", "勝者", "優位"):
+        if data.get(key):
+            pick = str(data[key]).strip()
+            break
+    if not pick:
+        m2 = re.search(r"(?:版\s*)?([ABab])(?![A-Za-z])", json.dumps(data, ensure_ascii=False))
+        pick = m2.group(1) if m2 else ""
+    if order == "new_first":
+        slots = {"新": "A", "新版": "A", "後": "A", "旧": "B", "旧版": "B", "前": "B"}
+    else:
+        slots = {"旧": "A", "旧版": "A", "前": "A", "新": "B", "新版": "B", "後": "B"}
+    slots.update({"a": "A", "b": "B", "版a": "A", "版b": "B",
+                  "a版": "A", "b版": "B", "同等": "", "引き分け": ""})
+    v = pick.strip().lower().replace(" ", "").replace("　", "")
+    winner = slots[v] if v in slots else v.upper()
     if winner not in ("A", "B"):
-        return {"winner": "", "raw": (raw or "")[:300], "error": f"winner が A/B でない: {winner}"}
+        return {"winner": "", "raw": (raw or "")[:300], "error": f"winner が A/B でない: {pick}"}
     return {"winner": winner,
             "margin": str(data.get("margin", ""))[:20],
             "decisive": str(data.get("decisive", ""))[:120],
-            "why": str(data.get("why", ""))[:200]}
+            "why": str(data.get("why", "") or data.get("note", ""))[:200]}
 
 
-def ask(text_a: str, text_b: str) -> dict:
+def ask(text_a: str, text_b: str, order: str = "old_first") -> dict:
     """審査モデルに1回聞く（AとBのどちらか）。"""
     sys.path.insert(0, str(BASE_DIR))
     import llm  # noqa: E402
 
     prompt = PROMPT.format(a=text_a, b=text_b)
-    return parse_choice(llm.call("judge", prompt, system=JUDGE_SYSTEM, max_tokens=12000))
+    return parse_choice(llm.call("judge", prompt, system=JUDGE_SYSTEM, max_tokens=12000), order)
 
 
 # ---------------------------------------------------------------- Elo
@@ -155,8 +177,8 @@ def compare(text_a: str, text_b: str) -> dict:
     """両方の順序で比べ、両方で同じ版が勝ったときだけ勝者を確定する。"""
     if clip(text_a).strip() == clip(text_b).strip():
         return {"verdict": "draw", "reason": "2つの版が同じ", "orders": []}
-    first = ask(clip(text_a), clip(text_b))     # A=旧, B=新
-    second = ask(clip(text_b), clip(text_a))    # A=新, B=旧（順序を入れ替える）
+    first = ask(clip(text_a), clip(text_b), "old_first")     # A=旧, B=新
+    second = ask(clip(text_b), clip(text_a), "new_first")    # A=新, B=旧（順序を入れ替える）
     new_first = first.get("winner") == "B"
     new_second = second.get("winner") == "A"
     old_first = first.get("winner") == "A"
