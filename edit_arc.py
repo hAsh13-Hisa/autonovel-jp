@@ -247,12 +247,12 @@ def main() -> int:
             if not gate_ok and (gate.stderr or "").strip():
                 print(f"    {gate.stderr.strip().splitlines()[-1]}")
             run(f"git checkout -- chapters/ch_{ch:02d}.md")
-            results.append((ch, old, old, "差し戻し"))
+            results.append((ch, old, jp_chars(chapter_text(ch)), "差し戻し"))
         else:
             results.append((ch, old, new, "採用"))
             run(f"git add -A && git commit -q -m "
                 f"'arc edit: ch{ch:02d} 章をまたぐ編集' --allow-empty")
-        print(f"  結果: {old:,} → {new:,}字")
+        print(f"  結果: {old:,} → {jp_chars(chapter_text(ch)):,}字")
 
     print("\n=== 章をまたぐ編集の結果 ===")
     tot_before = tot_after = 0
