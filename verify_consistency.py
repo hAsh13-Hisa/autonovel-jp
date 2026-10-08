@@ -201,20 +201,34 @@ ALIVE_MARKS = re.compile(
     r"呟い|言った|答えた|叫んだ|囁い|微笑ん|見つめ|手を振|駆け|走っ|頷い|振り返)")
 
 
-def _alive_evidence(name: str, text: str) -> int:
-    """その章で「生きている」手がかり（台詞・動作）が何箇所あるか。"""
+# 回想・遺品の言及に付く語。これが近くにある登場は「生きている」と数えない。
+MEMORY_MARKS = ("遺し", "遺品", "形見", "かつて", "の声", "の言葉", "の設計図", "のメモ", "の面影",
+                "生前", "もういない", "亡くな", "死ん", "錆びた破片", "言っていた", "最期",
+                "思い出", "記憶", "教え", "受け継", "残して")
+
+
+def _alive_evidence(name: str, text: str, radius: int = 60) -> int:
+    """その章で「生きている」と読める登場の数。
+
+    実測（2026-10-08）の作り直し:
+      - 「名前＋動作語」を動作語の一覧で拾うやり方は、動作語を書き漏らすと**生きている人物を
+        見落とす**（第19章の「ガラムがゴーグルのダイヤルを調整し」「絶叫し」を全部外した）。
+      - そこで **「回想・遺品の語が近くに無い登場」を数える**向きに変える。
+        死んだ人物の言及は「遺した」「かつて」「の設計図」「もういない」のどれかを伴うため、
+        これで分離できる（第18章の遺品の言及＝0、第19章の生きた言及＝5、と実測で分かれた）。
+    """
     n = 0
     for v in name_variants(name):
-        ev = re.escape(v)
-        # (a) 台詞の直後にその名前＝その人物が喋っている
-        n += len(re.findall(r"」\s*\n\s*\n\s*" + ev, text))
-        # (b) 名前＋助詞＋動作・発話＝その人物がその場で動いている
-        n += len(re.findall(ev + r"[はがも][^。\n]{0,12}" + ALIVE_MARKS.pattern, text))
+        for m in re.finditer(re.escape(v), text):
+            seg = text[max(0, m.start() - radius): m.end() + radius]
+            if any(k in seg for k in MEMORY_MARKS):
+                continue
+            n += 1
     return n
 
 
 def check_death_then_alive(defined: list, chapters: list,
-                            min_gap: int = 2, min_alive: int = 2) -> list:
+                            min_gap: int = 2, min_alive: int = 5) -> list:
     """「死んだ（消えた）あとに生きて再登場している」人物を挙げる。
 
     2026-10-08 実測: 第17章で死んだヒロインが、第22〜24章で普通に会話していた。
@@ -231,6 +245,32 @@ def check_death_then_alive(defined: list, chapters: list,
     for name in defined:
         variants = name_variants(name)
         if not variants:
+            continue
+        # 1) 名前に直接つく「もう戻らない」表現（最も確実）。こちらは章の間隔を問わない。
+        #    実測（2026-10-08）: 「ガラムだったものの残骸が…鉄の砂となって広がっている」（第13章）
+        #    のあと、第15章から操舵輪を回して生きていた。間隔はわずか1章なので、
+        #    「途切れて再登場」を待つやり方では捕まらない。
+        gone = None
+        for n, _f, t in chapters:
+            for v in variants:
+                m = re.search(re.escape(v) + r"(?:だったものの)?(?:残骸|遺体|死体)|"
+                              + re.escape(v) + r"(?:は|が|も)?(?:もういない|もう戻らない|"
+                                              r"戻ってこない|静寂に溶けた|帰らない)", t)
+                if m:
+                    gone = (n, m.group(0)[:30])
+                    break
+            if gone:
+                break
+        if gone:
+            later = [{"chapter": n, "alive": _alive_evidence(name, t)}
+                     for n, _f, t in chapters
+                     if n > gone[0] and _alive_evidence(name, t) >= min_alive]
+            if later:
+                out.append({"name": name, "died_in": gone[0], "mark": gone[1],
+                            "gap": later[0]["chapter"] - gone[0] - 1,
+                            "returns_in": later[0]["chapter"],
+                            "alive_later": [x["alive"] for x in later],
+                            "samples": [f"第{later[0]['chapter']}章で生きている（台詞・動作）"]})
             continue
         present = [n for n, _f, t in chapters if _alive_evidence(name, t) >= min_alive]
         if len(present) < 3:
