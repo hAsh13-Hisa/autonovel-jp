@@ -234,11 +234,18 @@ def main() -> int:
         run(f"uv run python gen_revision.py {ch} {brief}")
         new = jp_chars(chapter_text(ch))
         ratio = new / old if old else 1.0
-        gate_ok = run(f"uv run python verify_chapter_gates.py --band 3000 99999 "
-                      f"chapters/ch_{ch:02d}.md").returncode == 0
+        gate = run(f"uv run python verify_chapter_gates.py --band 3000 99999 "
+                   f"chapters/ch_{ch:02d}.md")
+        gate_ok = gate.returncode == 0
         if not gate_ok or ratio < MIN_RATIO:
             reason = "章ゲート不合格" if not gate_ok else f"痩せすぎ（{ratio:.0%}）"
             print(f"  {reason} → 元に戻します")
+            # 不合格の中身を出す（どれで落ちたか分からないと直しようがない）
+            for line in (gate.stdout or "").splitlines():
+                if "[FAIL]" in line or "警告のみで通過" in line:
+                    print(f"    {line.strip()}")
+            if not gate_ok and (gate.stderr or "").strip():
+                print(f"    {gate.stderr.strip().splitlines()[-1]}")
             run(f"git checkout -- chapters/ch_{ch:02d}.md")
             results.append((ch, old, old, "差し戻し"))
         else:
