@@ -43,9 +43,20 @@ def find_font(name, style="Regular"):
     return None
 
 
+def default_title():
+    """表紙の題名は seed.txt の「タイトル：」から取る（outline.md には見出し行が無い。
+    上流雛形の別作品名を焼き込まない）。"""
+    seed = Path(__file__).parent / "seed.txt"
+    if seed.exists():
+        for line in seed.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("タイトル"):
+                return line.split("：", 1)[-1].split(":", 1)[-1].strip()
+    return "Untitled Novel"
+
+
 def compose_cover(
     art_path,
-    title="The Second Son of the House of Bells",
+    title=None,
     author="Claude Hermes",
     subtitle="A Novel",
     blurb="",
@@ -56,6 +67,7 @@ def compose_cover(
     canvas_height=None,
     spine_width=None,
 ):
+    title = title or default_title()
     # Use exact printer dimensions if provided, otherwise calculate
     if canvas_width and canvas_height and spine_width:
         canvas_w = canvas_width
@@ -330,7 +342,7 @@ def compose_cover(
 def main():
     parser = argparse.ArgumentParser(description="Compose print-ready book cover")
     parser.add_argument("art_path", help="Path to panoramic cover art")
-    parser.add_argument("--title", default="The Second Son of the House of Bells")
+    parser.add_argument("--title", default=None)
     parser.add_argument("--author", default="Claude Hermes")
     parser.add_argument("--subtitle", default="A Novel")
     parser.add_argument("--blurb", default="")

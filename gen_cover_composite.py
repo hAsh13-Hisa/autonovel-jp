@@ -55,14 +55,26 @@ def draw_text_with_shadow(draw, position, text, font, fill, shadow_color, shadow
     draw.text((x, y), text, font=font, fill=fill, anchor="mt")
 
 
+def default_title():
+    """表紙の題名は seed.txt の「タイトル：」から取る（outline.md には見出し行が無い。
+    上流雛形の別作品名を焼き込まない）。"""
+    seed = Path(__file__).parent / "seed.txt"
+    if seed.exists():
+        for line in seed.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("タイトル"):
+                return line.split("：", 1)[-1].split(":", 1)[-1].strip()
+    return "Untitled Novel"
+
+
 def composite_cover(
     art_path,
-    title="The Second Son of the House of Bells",
+    title=None,
     author="Claude Hermes",
     subtitle="A Novel",
     preset="auto",
     output_path=None,
 ):
+    title = title or default_title()
     img = Image.open(art_path).convert("RGBA")
     w, h = img.size
 
@@ -178,7 +190,7 @@ def composite_cover(
 def main():
     parser = argparse.ArgumentParser(description="Composite text over cover art")
     parser.add_argument("art_path", help="Path to the cover art image")
-    parser.add_argument("--title", default="The Second Son of the House of Bells")
+    parser.add_argument("--title", default=None)
     parser.add_argument("--author", default="Claude Hermes")
     parser.add_argument("--subtitle", default="A Novel")
     parser.add_argument("--preset", choices=["auto", "dark", "light"], default="auto")

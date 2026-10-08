@@ -60,17 +60,18 @@ def call_opus(prompt, max_tokens=8000):
 
 
 def get_title():
-    """Extract novel title from first chapter or outline."""
+    """Extract the novel title. 題名は seed.txt の「タイトル：」から取る
+    （outline.md には見出し行が無く、1行目は幕構成なので題名にならない）。"""
+    seed = BASE_DIR / "seed.txt"
+    if seed.exists():
+        for line in seed.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("タイトル"):
+                return line.split("：", 1)[-1].split(":", 1)[-1].strip()
     outline = BASE_DIR / "outline.md"
     if outline.exists():
-        first_line = outline.read_text().split("\n")[0]
-        title = first_line.lstrip("# ").strip()
-        if title:
-            return title
-    ch1 = CHAPTERS_DIR / "ch_01.md"
-    if ch1.exists():
-        first_line = ch1.read_text().split("\n")[0]
-        return first_line.lstrip("# ").strip()
+        for line in outline.read_text(encoding="utf-8").splitlines():
+            if line.startswith("# "):
+                return line.lstrip("# ").strip()
     return "Untitled Novel"
 
 

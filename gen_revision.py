@@ -26,10 +26,23 @@ def call_revision(prompt, max_tokens=16000):
     )
 
 
+def novel_title():
+    """題名は seed.txt の「タイトル：」から取る（outline.md には見出し行が無い。
+    上流雛形の別作品名を焼き込まない）。"""
+    seed = BASE_DIR / "seed.txt"
+    if seed.exists():
+        for line in seed.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("タイトル"):
+                return line.split("：", 1)[-1].split(":", 1)[-1].strip()
+    return ""
+
+
 def main():
     ch_num = int(sys.argv[1])
     brief_file = sys.argv[2]
     
+    title = novel_title()
+    heading = f"「{title}」第{ch_num}章" if title else f"第{ch_num}章"
     voice = (BASE_DIR / "voice.md").read_text()
     characters = (BASE_DIR / "characters.md").read_text()
     world = (BASE_DIR / "world.md").read_text()
@@ -54,7 +67,7 @@ def main():
     old_path = BASE_DIR / "chapters" / f"ch_{ch_num:02d}.md"
     old_text = old_path.read_text() if old_path.exists() and old_path.stat().st_size > 0 else "(no existing draft)"
     
-    prompt = f"""「ベルズの家の次男」第{ch_num}章を書き直してください。
+    prompt = f"""{heading}を書き直してください。
 
 REVISION BRIEF（改稿ブリーフ。これに正確に従うこと）：
 {brief}
