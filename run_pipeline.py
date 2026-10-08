@@ -1037,8 +1037,15 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         apply_cuts = BASE_DIR / "apply_cuts.py"
         if apply_cuts.exists():
             step("Applying mechanical cuts (OVER-EXPLAIN, REDUNDANT)...")
-            run_tool("uv run python apply_cuts.py all "
-                     "--types OVER-EXPLAIN REDUNDANT --min-fat 15", timeout=300)
+            cuts_res = run_tool("uv run python apply_cuts.py all "
+                                "--types OVER-EXPLAIN REDUNDANT --min-fat 15", timeout=300)
+            if cuts_res is not None and cuts_res.returncode != 0:
+                # apply_cuts は「適用に失敗した箇所がある」と exit 2 を返す。
+                # 黙って先へ進むと、削れていない本文を「削った」前提で扱ってしまう。
+                step(f"WARNING: 機械的な削除が一部失敗しました（exit {cuts_res.returncode}）。"
+                     "本文はこのあとの章ゲートで守られますが、削れなかった箇所は残ります")
+                log_result("mechanical_cuts", f"cycle{cycle}", "", 0, "warn",
+                           f"apply_cuts が exit {cuts_res.returncode}")
             revision_gate_check(changed_chapters())  # 削った後も同じゲートを通す
         else:
             step("apply_cuts.py not found, skipping mechanical cuts")
@@ -1350,9 +1357,12 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             step("Running mechanical cleanup pass...")
             apply_cuts_py = BASE_DIR / "apply_cuts.py"
             if apply_cuts_py.exists():
-                run_tool(
+                cuts_res = run_tool(
                     "uv run python apply_cuts.py all --types OVER-EXPLAIN REDUNDANT --min-fat 15",
                     timeout=300)
+                if cuts_res is not None and cuts_res.returncode != 0:
+                    step(f"WARNING: 機械的な削除が一部失敗しました（exit {cuts_res.returncode}）。"
+                         "章ゲートで守られる範囲だけが反映されます")
                 revision_gate_check(changed_chapters())  # 削った後も章ゲート
                 git_add_commit(f"review round {rnd}: mechanical cleanup")
             
