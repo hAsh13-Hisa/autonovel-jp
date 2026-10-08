@@ -47,8 +47,8 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # 既定で回す機械項目。unused_setting は「全体を見る材料」なので既定では回さない
 # （--only unused_setting で使う。実測: 完成稿では40件出るが、書式ラベルや作例の引用が混ざる）
-MECH_ITEMS = ("late_vanish",)
-ALL_MECH_ITEMS = ("late_vanish", "unused_setting")
+MECH_ITEMS = ("late_vanish", "death_then_alive")
+ALL_MECH_ITEMS = ("late_vanish", "unused_setting", "death_then_alive")
 
 HONORIFICS = ("様", "さん", "殿", "ちゃん", "先生", "君", "どの", "ども")
 
@@ -129,13 +129,30 @@ def check_unused_setting(terms: dict, chapters: list) -> list:
 
 
 def extract_defined_names(characters: Path) -> list:
+    """定義キャラの「呼び名」を取り出す。
+
+    実測（2026-10-08）: 上流のまま `## 見出し` をそのまま名前にすると
+    「2. 聖歌隊長ルナ (Luna)」「キャラクター相関マップ」のような**見出し文字列**が
+    名前として扱われ、本文の「ルナ」と一致しない（＝検査が素通りする）。
+    しかも節見出しが「消えた人物」として報告されていた（誤検出）。
+    よって番号・肩書き・ローマ字を落とし、末尾のカタカナ（無ければ漢字かな）の
+    並びを名前として取る。
+    """
     names = []
     for line in read(characters).splitlines():
-        m = re.match(r"^##\s+(.+?)(?:（.*?）)?\s*$", line.strip())
-        if m:
-            name = m.group(1).strip()
-            if name and not name.startswith(("追加", "キャラクター間", "最終", "用語", "世界")):
-                names.append(name)
+        m = re.match(r"^##\s+(.+?)\s*$", line.strip())
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        if raw.startswith(("キャラクター相関", "テーマ的", "用語", "世界", "相関")):
+            continue
+        raw = re.sub(r"^\d+[.．、]\s*", "", raw)          # 先頭の番号
+        raw = re.sub(r"[（(].*?[)）]", "", raw).strip()    # ローマ字表記
+        raw = re.split(r"[：:]", raw)[-1].strip()          # 「追加キャラクター：リナ」
+        tail = re.search(r"[ァ-ヶー]{2,6}$", raw) or re.search(r"[ぁ-ん一-龥]{2,6}$", raw)
+        name = (tail.group(0) if tail else raw).strip()
+        if name:
+            names.append(name)
     return names
 
 
@@ -171,6 +188,80 @@ def check_late_vanish(defined: list, chapters: list, tail: int = 3) -> list:
                for v in variants):
             continue
         out.append({"name": name, "missing_from": tail_nums})
+    return out
+
+
+# 死の描写と、生きている描写（台詞・動作）の手がかり
+# 「死ん」「殺され」は「生きてるのか死んでるのか」「死ぬほど」のような比喩・疑問で誤検出する
+# （実測 2026-10-08: 第15章の一節でガラムとゼノスが誤検出された）ため、断定の強い語だけを使う。
+DEATH_MARKS = re.compile(r"(息を引き取|息絶え|絶命|亡くな|遺体|死体|最期|命を落と|永眠)")
+DEATH_EXCLUDE = ("死んでるのか", "死んだよう", "死ぬほど", "死んでも", "死ぬ気", "死んだも同然")
+ALIVE_MARKS = re.compile(
+    r"(座り|座る|笑い|笑う|揺らし|預け|指し示|問いか|立ち上が|歩い|隣に|隣り|"
+    r"呟い|言った|答えた|叫んだ|囁い|微笑ん|見つめ|手を振|駆け|走っ|頷い|振り返)")
+
+
+def _alive_evidence(name: str, text: str) -> int:
+    """その章で「生きている」手がかり（台詞・動作）が何箇所あるか。"""
+    n = 0
+    for v in name_variants(name):
+        ev = re.escape(v)
+        # (a) 台詞の直後にその名前＝その人物が喋っている
+        n += len(re.findall(r"」\s*\n\s*\n\s*" + ev, text))
+        # (b) 名前＋助詞＋動作・発話＝その人物がその場で動いている
+        n += len(re.findall(ev + r"[はがも][^。\n]{0,12}" + ALIVE_MARKS.pattern, text))
+    return n
+
+
+def check_death_then_alive(defined: list, chapters: list,
+                            min_gap: int = 2, min_alive: int = 2) -> list:
+    """「死んだ（消えた）あとに生きて再登場している」人物を挙げる。
+
+    2026-10-08 実測: 第17章で死んだヒロインが、第22〜24章で普通に会話していた。
+    **章ごとの判定では見えない**（どの章も単体では破綻していない）ので、全編を並べて見る。
+
+    作り方の理由（誤検出を避けるため）:
+      - 単に「死」の語の近くに名前があるかで判定すると、主人公が必ず引っかかる
+        （死の場面に立ち会っているため）。実測で4件中3件が誤検出だった。
+      - そこで **「生きている手がかり（台詞・動作）が途切れ、そのあと再び現れる」**という
+        形を主の手がかりにし、「消える前後に死の描写がある」ことを条件に足す。
+    """
+    out = []
+    nums = [n for n, _f, _t in chapters]
+    for name in defined:
+        variants = name_variants(name)
+        if not variants:
+            continue
+        present = [n for n, _f, t in chapters if _alive_evidence(name, t) >= min_alive]
+        if len(present) < 3:
+            continue
+        for i in range(len(present) - 1):
+            gap = present[i + 1] - present[i] - 1
+            if gap < min_gap:
+                continue
+            last_seen = present[i]
+            deaths = []
+            for n, _f, t in chapters:
+                if not (last_seen <= n <= last_seen + max(gap, 2)):
+                    continue
+                for m in DEATH_MARKS.finditer(t):
+                    seg = t[max(0, m.start() - 90):m.end() + 90]
+                    if any(x in seg for x in DEATH_EXCLUDE):
+                        continue
+                    if any(v in seg for v in variants):
+                        deaths.append({"chapter": n, "mark": m.group(0)})
+            if deaths:
+                out.append({
+                    "name": name,
+                    "died_in": deaths[0]["chapter"],
+                    "mark": deaths[0]["mark"],
+                    "gap": gap,
+                    "returns_in": present[i + 1],
+                    "alive_later": [_alive_evidence(name, t)
+                                    for n, _f, t in chapters if n > last_seen + gap],
+                    "samples": [f"第{present[i+1]}章で再登場（{gap}章ぶり）"],
+                })
+                break   # 同じ人物は1件でよい
     return out
 
 
@@ -257,7 +348,7 @@ def parse_conflicts(raw: str) -> dict:
 
 def build_report(repo: Path, mech: dict, judged: dict) -> str:
     lines = [f"# 整合ゲート: {repo}", ""]
-    lines.append("## 機械項目（辞書なしで精度の出る2項目）")
+    lines.append("## 機械項目（辞書なしで精度の出る3項目）")
     uns = mech.get("unused_setting")
     if uns is not None:
         lines.append(f"- 使われない設定: {len(uns)}件")
@@ -268,6 +359,13 @@ def build_report(repo: Path, mech: dict, judged: dict) -> str:
         lines.append(f"- 消えた人物（最後の3章に出てこない）: {len(lv)}件")
         for it in lv:
             lines.append(f"  - {it['name']}（第1章には登場）")
+    dta = mech.get("death_then_alive")
+    if dta is not None:
+        lines.append(f"- 死んだのに後で生きている人物: {len(dta)}件")
+        for it in dta:
+            lines.append(f"  - {it['name']}（第{it['died_in']}章で「{it['mark']}」）→ "
+                         f"{it['gap']}章の空白を挟んで第{it['returns_in']}章から台詞・動作あり"
+                         f"（以後の手がかり {sum(it['alive_later'])}箇所）")
     if judged:
         lines.append("")
         lines.append("## 審査項目（judge モデル・1章1回）")
@@ -298,6 +396,15 @@ def build_brief(repo: Path, mech: dict, judged: dict) -> str:
         out.append("## 消えた人物")
         for it in lv:
             out.append(f"- {it['name']} が最後の3章に出てこない（退場を書くか、登場させる）")
+        out.append("")
+    dta = mech.get("death_then_alive") or []
+    if dta:
+        out.append("## 死んだのに後で生きている人物（最優先で直す）")
+        for it in dta:
+            out.append(f"- **{it['name']} は第{it['died_in']}章で死んでいる（「{it['mark']}」）のに、"
+                       f"{it['gap']}章の空白を挟んで第{it['returns_in']}章から生きて台詞・動作がある。**"
+                       "生きている人物として書かないこと。触れてよいのは、記憶・遺した歌や品・"
+                       "残響としての言及（過去形）だけ。その場面の役割は、居合わせる人物と主人公の内面で引き受ける。")
         out.append("")
     return "\n".join(out)
 
@@ -342,6 +449,9 @@ def main() -> int:
         mech["unused_setting"] = check_unused_setting(extract_setting_terms(repo), chapters)
     if "late_vanish" in only:
         mech["late_vanish"] = check_late_vanish(
+            extract_defined_names(repo / "characters.md"), chapters)
+    if "death_then_alive" in only:
+        mech["death_then_alive"] = check_death_then_alive(
             extract_defined_names(repo / "characters.md"), chapters)
 
     judged = {}
