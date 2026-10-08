@@ -40,7 +40,12 @@ FOUNDATION_THRESHOLD = 7.5
 # 設定が合格点に届かないまま何周続いたら止めるか。実測: 届かないまま20周（＝上限）まで
 # 回り続け、判定だけで数十万トークンを捨てた。改善しないループは早く止める。
 FOUNDATION_PLATEAU_ITERS = int(os.environ.get("AUTONOVEL_FOUNDATION_PLATEAU_ITERS", "4"))
-CHAPTER_THRESHOLD = 4.0
+CHAPTER_THRESHOLD = float(os.environ.get("AUTONOVEL_CHAPTER_THRESHOLD", "6.0"))
+# 章の合格ライン。本家の仕様は 6.0 だが fork は 4.0 で走らせていた。
+# 2026-10-07 実測: 判定を手元のローカル12B（gemma4:12b）に替えると点が**甘く出る**
+# （却下された生原稿に 4.7、人手で仕上げた章に 7.8、走行中の初稿に 8.0）。
+# 4.0 のままだと弱い章も通ってしまうので、**6.0 に戻した**。
+# 手元モデルを使うときはこの値を実測で校正する（上げすぎると作り直しが増えて高くつく）。
 MAX_FOUNDATION_ITERS = 20
 MAX_CHAPTER_ATTEMPTS = 5
 # 判定（judge）の応答が読めないときのやり直し回数。すべて失敗したら
