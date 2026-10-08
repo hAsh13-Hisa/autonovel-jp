@@ -1039,6 +1039,19 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             step("apply_cuts.py not found, skipping mechanical cuts")
 
         # -- Step 3: Reader panel --
+        # 読者パネルは arc_summary.md（全編あらすじ）を読む。ところがそれを作るのは
+        # 書き出しの工程なので、**改訂フェーズを単独で回すとあらすじが無くパネルが落ちる**
+        # （2026-10-08 実測。落ちても「指摘なし」として静かに進んでいた）。
+        # 無いとき・章より古いときは、ここで作り直す。
+        arc_summary = BASE_DIR / "arc_summary.md"
+        newest_ch = max((p.stat().st_mtime for p in CHAPTERS_DIR.glob("ch_*.md")), default=0)
+        if not arc_summary.exists() or arc_summary.stat().st_mtime < newest_ch:
+            if not arc_summary.exists():
+                step("全編あらすじ（読者パネルの入力）が無いので作ります...")
+            else:
+                step("章が変わったので全編あらすじを作り直します...")
+            uv_run("build_arc_summary.py", timeout=1800)
+
         step("Running reader panel evaluation...")
         panel_res = uv_run("reader_panel.py", timeout=600)
         if panel_res.returncode != 0:
