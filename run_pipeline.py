@@ -1040,7 +1040,10 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
 
         # -- Step 3: Reader panel --
         step("Running reader panel evaluation...")
-        uv_run("reader_panel.py", timeout=600)
+        panel_res = uv_run("reader_panel.py", timeout=600)
+        if panel_res.returncode != 0:
+            step("WARNING: 読者パネルが失敗しました（この周はパネルの指摘なしで続きます。"
+                 "原因は上のログを見てください）")
 
         # -- Step 4: Parse panel consensus --
         panel_path = EDIT_LOGS_DIR / "reader_panel.json"

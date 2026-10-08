@@ -5,6 +5,7 @@ Reads part 1 (chapters 1-12) from /tmp/outline_output.md, generates the
 remaining chapters and the foreshadowing ledger, and appends to outline.md.
 """
 import os
+import re
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
@@ -13,6 +14,67 @@ BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
 import llm
+
+# 幕構成のうち、part2 が担当する範囲（前半の gen_outline.py は第12章までしか書かないので、
+# 幕構成も第II幕前編までしか書かれない）。
+ACT_RANGES = [("第II幕后編", 50, 77), ("第III幕", 77, 101)]
+
+
+def chapter_positions(text: str) -> dict:
+    """各章の「%位置」の開始値を拾う（例: `- **%位置：** 51-54%` → 51）。"""
+    pos, cur = {}, None
+    for ln in text.splitlines():
+        m = re.match(r"###\s*第(\d+)章", ln)
+        if m:
+            cur = int(m.group(1))
+            continue
+        if cur is not None:
+            m2 = re.search(r"%位置[^0-9]*(\d+)", ln)
+            if m2:
+                pos[cur] = int(m2.group(1))
+                cur = None
+    return pos
+
+
+def complete_act_overview(text: str) -> str:
+    """「幕構成」欄の後半が空なら、各章の %位置 から機械的に補う。
+
+    実測（2026-10-08）: 幕構成は**前半（第1〜12章）ぶんしか書かれない**。gen_outline.py は
+    「幕構成は4つすべて書け」と指示しても、章を第12章までしか書かないので 23〜50% で止まる。
+    part2 は章だけを追記するので、24章のアウトラインの幕構成欄が
+    **作品の後半（50〜100%）について何も語らない**状態で残っていた。
+    → モデルの気分に任せず、章の %位置 から補う（何度実行しても同じ結果＝冪等）。
+    """
+    lines = text.splitlines()
+    try:
+        start = next(i for i, l in enumerate(lines) if re.match(r"^##\s*幕構成", l))
+    except StopIteration:
+        return text
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("## "):
+            end = i
+            break
+    section = "\n".join(lines[start:end])
+
+    add = []
+    for label, lo, hi in ACT_RANGES:
+        # 後編は「後編」「后編」の揺れを吸収する（プロンプト側は「后編」表記）
+        if label in section or (label == "第II幕后編" and ("後編" in section or "后編" in section)):
+            continue
+        chs = sorted(n for n, p in chapter_positions(text).items() if lo <= p < hi)
+        if not chs:
+            continue
+        add.append(f"- **{label}（{lo}〜{hi - 1}%）：** 第{chs[0]}章 〜 第{chs[-1]}章")
+    if not add:
+        return text
+
+    ins = end
+    while ins - 1 > start and (not lines[ins - 1].strip() or lines[ins - 1].strip() == "---"):
+        ins -= 1
+    print(f"幕構成の後半が空だったので補いました: {len(add)}行", file=sys.stderr)
+    return "\n".join(lines[:ins] + add + lines[ins:])
+
 
 
 def call_writer(prompt, max_tokens=16000):
@@ -24,19 +86,21 @@ def call_writer(prompt, max_tokens=16000):
     )
 
 
-seed = (BASE_DIR / "seed.txt").read_text()
-world = (BASE_DIR / "world.md").read_text()
-characters = (BASE_DIR / "characters.md").read_text()
-mystery = (BASE_DIR / "MYSTERY.md").read_text()
+def main() -> None:
+    """後半の章アウトラインと伏線台帳を作り、outline.md に追記する。"""
+    seed = (BASE_DIR / "seed.txt").read_text()
+    world = (BASE_DIR / "world.md").read_text()
+    characters = (BASE_DIR / "characters.md").read_text()
+    mystery = (BASE_DIR / "MYSTERY.md").read_text()
 
-# Part 1 (chapters 1-12) from the handoff file
-part1_path = Path("/tmp/outline_output.md")
-if not part1_path.exists():
-    print("ERROR: /tmp/outline_output.md not found (run gen_outline.py first)", file=sys.stderr)
-    sys.exit(1)
-part1 = part1_path.read_text()
+    # Part 1 (chapters 1-12) from the handoff file
+    part1_path = Path("/tmp/outline_output.md")
+    if not part1_path.exists():
+        print("ERROR: /tmp/outline_output.md not found (run gen_outline.py first)", file=sys.stderr)
+        sys.exit(1)
+    part1 = part1_path.read_text()
 
-prompt = f"""このファンタジー小説の章アウトラインの後半（第13章〜第24章）と伏線台帳を構築してください。
+    prompt = f"""このファンタジー小説の章アウトラインの後半（第13章〜第24章）と伏線台帳を構築してください。
 前半（第1章〜第12章）はすでにあります。同じ形式で続けてください。
 
 SEED CONCEPT（種コンセプト）：
@@ -103,16 +167,22 @@ CHARACTER REGISTRY（キャラクター登録簿）：
 
 出力はすべて日本語で書いてください。第13章〜第24章と伏線台帳まで、完全に書いてください。
 """
-
-print("Calling writer model...", file=sys.stderr)
-result = call_writer(prompt)
-# Retry on empty/short output
-attempt = 1
-while (len(result.strip()) < 500) and attempt < 4:
-    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    print("Calling writer model...", file=sys.stderr)
     result = call_writer(prompt)
-    attempt += 1
-# Append part 2 to outline.md
-outline_path = BASE_DIR / "outline.md"
-outline_path.write_text(part1.strip() + "\n\n" + result.strip() + "\n")
-print(result)
+    # Retry on empty/short output
+    attempt = 1
+    while (len(result.strip()) < 500) and attempt < 4:
+        print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+        result = call_writer(prompt)
+        attempt += 1
+    # Append part 2 to outline.md
+    outline_path = BASE_DIR / "outline.md"
+    combined = part1.strip() + "\n\n" + result.strip() + "\n"
+    # 幕構成の後半（50〜100%）はモデルが書かないので、%位置 から補ってから保存する
+    combined = complete_act_overview(combined)
+    outline_path.write_text(combined)
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
