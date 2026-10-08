@@ -164,7 +164,8 @@ def compare(text_a: str, text_b: str) -> dict:
     failed = [x for x in (first, second) if not x.get("winner")]
     if failed:
         return {"verdict": "draw", "reason": "審査の出力が読めなかった（判定しない）",
-                "orders": [first, second], "failed": len(failed)}
+                "orders": [{"order": "旧→新", **first}, {"order": "新→旧", **second}],
+                "failed": len(failed)}
     if new_first and new_second:
         verdict, reason, score_a = "adopt", "両方の順序で新版が勝った", 0.0
     elif old_first and old_second:
@@ -203,10 +204,11 @@ def main() -> int:
     print(f"{ch}一対比較: {result['verdict']} — {result['reason']}")
     for entry in result.get("orders", []):
         if entry.get("winner"):
-            print(f"  [{entry['order']}] 勝ち={entry['winner']} "
+            print(f"  [{entry.get('order', '?')}] 勝ち={entry['winner']} "
                   f"({entry.get('margin', '')}) 「{entry.get('decisive', '')}」 {entry.get('why', '')}")
         else:
-            print(f"  [{entry['order']}] 判定できず: {entry.get('error', entry.get('raw', ''))}")
+            print(f"  [{entry.get('order', '?')}] 判定できず: "
+                  f"{entry.get('error') or entry.get('raw', '')}")
     if result.get("elo"):
         for label, (before, after) in result["elo"].items():
             print(f"  Elo: {label} {before} → {after}")
