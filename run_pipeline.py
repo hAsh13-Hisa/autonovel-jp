@@ -317,12 +317,23 @@ def parse_lore_score(stdout: str) -> float:
     return parse_score(stdout, "lore_score")
 
 
+def jp_char_count(text: str) -> int:
+    """日本語の本文の長さ＝文字数。
+
+    空白で区切って数えると、日本語は行や段落の数しか出ない（実測: 24章119,210字の小説が
+    「2942 words」と表示され、桁が読めなかった）。本文の長さは**字数**で数える。
+    **数え方は章ゲートの「文字数」と同じ（改行を含む生の文字数）** — 別々に数えると
+    同じ章が「4,608」と「4,387」の2通りで表示され、どちらが合否の数字か分からなくなる。
+    """
+    return len(text)
+
+
 def count_words_in_chapters() -> int:
-    """Sum word count across all chapter files."""
+    """全章の字数の合計（章ゲートの「文字数」と同じ数え方）。"""
     total = 0
     if CHAPTERS_DIR.exists():
         for f in CHAPTERS_DIR.glob("ch_*.md"):
-            total += len(f.read_text().split())
+            total += jp_char_count(f.read_text())
     return total
 
 
@@ -713,8 +724,8 @@ def run_drafting(state: dict) -> dict:
                     step("Chapter file missing or too short, retrying...")
                     continue
 
-            word_count = len(ch_file.read_text().split())
-            step(f"Drafted {word_count} words")
+            word_count = jp_char_count(ch_file.read_text())
+            step(f"Drafted {word_count}字")
 
             # Evaluate (retry on parse failure / judge model returning bad JSON)
             score = -1.0
@@ -814,7 +825,7 @@ def run_drafting(state: dict) -> dict:
                 run_tool(f"mv {best_draft} chapters/ch_{ch:02d}.md")
                 step(f"合格はしませんでしたが、いちばん良かった稿（{best_score}）を残します")
             if ch_file.exists():
-                word_count = len(ch_file.read_text().split())
+                word_count = jp_char_count(ch_file.read_text())
                 commit_hash = git_add_commit(
                     f"ch{ch:02d}: best-effort after {MAX_CHAPTER_ATTEMPTS} attempts")
                 log_result(commit_hash, f"ch{ch:02d}", best_score if best_score >= 0 else "?",
@@ -831,7 +842,7 @@ def run_drafting(state: dict) -> dict:
     save_state(state)
 
     total_words = count_words_in_chapters()
-    banner(f"DRAFTING COMPLETE — {total} chapters, {total_words} words")
+    banner(f"DRAFTING COMPLETE — {total} chapters, {total_words}字")
     return state
 
 
@@ -1165,7 +1176,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                                       (post_eval.stderr or "") + (post_eval.stdout or ""))
 
             ch_file = CHAPTERS_DIR / f"ch_{ch_num:02d}.md"
-            word_count = len(ch_file.read_text().split()) if ch_file.exists() else 0
+            word_count = jp_char_count(ch_file.read_text()) if ch_file.exists() else 0
 
             step(f"Ch {ch_num}: {pre_score} -> {post_score}")
 
@@ -1207,7 +1218,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                                   (full_eval.stderr or "") + (full_eval.stdout or ""))
 
         total_words = count_words_in_chapters()
-        step(f"Novel score: {novel_score}  (prev: {prev_score}, words: {total_words})")
+        step(f"Novel score: {novel_score}  (prev: {prev_score}, 字数: {total_words})")
 
         # Commit cycle results
         commit_hash = git_add_commit(
@@ -1352,8 +1363,8 @@ def run_export(state: dict) -> dict:
 
     if parts:
         manuscript.write_text("\n\n---\n\n".join(parts) + "\n")
-        word_count = sum(len(p.split()) for p in parts)
-        step(f"Manuscript: {len(parts)} chapters, {word_count} words")
+        word_count = sum(jp_char_count(p) for p in parts)
+        step(f"Manuscript: {len(parts)} chapters, {word_count}字")
     else:
         step("WARNING: no chapter files found for manuscript")
 
@@ -1389,7 +1400,7 @@ def run_export(state: dict) -> dict:
     state["current_focus"] = "done"
     save_state(state)
 
-    banner(f"EXPORT COMPLETE — {len(chapter_files)} chapters, {total_words} words")
+    banner(f"EXPORT COMPLETE — {len(chapter_files)} chapters, {total_words}字")
     return state
 
 
