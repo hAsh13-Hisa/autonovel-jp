@@ -40,19 +40,25 @@ FOUNDATION_THRESHOLD = 7.5
 # 設定が合格点に届かないまま何周続いたら止めるか。実測: 届かないまま20周（＝上限）まで
 # 回り続け、判定だけで数十万トークンを捨てた。改善しないループは早く止める。
 FOUNDATION_PLATEAU_ITERS = int(os.environ.get("AUTONOVEL_FOUNDATION_PLATEAU_ITERS", "4"))
-CHAPTER_THRESHOLD = float(os.environ.get("AUTONOVEL_CHAPTER_THRESHOLD", "6.0"))
-# 章の合格ライン。本家の仕様は 6.0 だが fork は 4.0 で走らせていた。
-# 2026-10-07 実測: 判定を手元のローカル12B（gemma4:12b）に替えると点が**甘く出る**
-# （却下された生原稿に 4.7、人手で仕上げた章に 7.8、走行中の初稿に 8.0）。
-# 4.0 のままだと弱い章も通ってしまうので、**6.0 に戻した**。
-# 手元モデルを使うときはこの値を実測で校正する（上げすぎると作り直しが増えて高くつく）。
+CHAPTER_THRESHOLD = float(os.environ.get("AUTONOVEL_CHAPTER_THRESHOLD", "5.5"))
+# 章の合格ライン。本家の仕様は 6.0、fork は 4.0 で走らせていた。
+# **ラインは判定モデルの厳しさに合わせて実測で決める**（甘いモデル＋高い線＝作り直し地獄）。
+# 2026-10-07: 手元のローカル12Bは点が甘く（却下された生原稿 4.7／仕上げた章 7.8／初稿 8.0）、
+# 4.0 では弱い章も通った → 6.0 に上げた。
+# 2026-10-08: 判定をクラウドの gemma4:31b-cloud に替えると**生原稿は 5.4〜5.8 に密集**し、
+# 6.0 だと1章あたり3.3回の作り直し＝**56万トークン**を食った（23章で1000万トークン超）。
+# 生原稿にかける線は **5.5** が妥当（品質は改訂フェーズで上げる。ドラフト段階で
+# 完成稿の物差しを当てない）。上限（MAX_CHAPTER_ATTEMPTS）とセットで費用を読むこと。
 # 判定（evaluate.py）1回に許す時間。既定300秒。
 # 2026-10-08 実測: 手元のローカルモデルが**GPUに載らずCPUで動くと1回が数十分**かかり、
 # 300秒で切れて「評価の失敗」として走行が止まった。遅い判定を使うときはここを上げる
 # （例: AUTONOVEL_EVAL_TIMEOUT=900）。
 EVAL_TIMEOUT = int(os.environ.get("AUTONOVEL_EVAL_TIMEOUT", "300"))
 MAX_FOUNDATION_ITERS = 20
-MAX_CHAPTER_ATTEMPTS = 5
+MAX_CHAPTER_ATTEMPTS = int(os.environ.get("AUTONOVEL_MAX_CHAPTER_ATTEMPTS", "5"))
+# 同じ章を何回まで作り直すか。1回の作り直し＝約17万トークン（実測）。
+# 2026-10-08 実測: 判定が厳しいモデル（クラウドのgemma4）だと生原稿が5.4〜5.8に密集し、
+# 5回まで粘ると**1章あたり3.3回の作り直し＝56万トークン**になった。上限は費用の主レバー。
 # 判定（judge）の応答が読めないときのやり直し回数。すべて失敗したら
 # 「低い点」ではなく「評価の失敗」として止める（stop_for_eval_failure）。
 MAX_JUDGE_TRIES = 3
@@ -474,6 +480,12 @@ TRIAL_ONLY = os.environ.get("AUTONOVEL_TRIAL_ONLY", "0") != "0"
 # 段階実行（小さく実測→続行判断）」のためのノブ。章ごとに保存されるので、止めても同じ
 # コマンドで続きから進む。
 MAX_CHAPTERS = int(os.environ.get("AUTONOVEL_MAX_CHAPTERS", "0"))
+# 指定した章だけを書く（穴の埋め戻し用）。例: AUTONOVEL_CHAPTERS_ONLY=3,5,6
+# 使いどころ（2026-10-08 の実測）: 全試行が不合格になった章が**消えて穴が空いた**とき、
+# その章だけを作り直す。state の「どこまで書いたか」は下げない（max で更新する）。
+CHAPTERS_ONLY = [int(x) for x in
+                 os.environ.get("AUTONOVEL_CHAPTERS_ONLY", "").replace(" ", "").split(",")
+                 if x.strip().isdigit()]
 TRIAL_BRIEF = BASE_DIR / os.environ.get(
     "AUTONOVEL_TRIAL_BRIEF", "briefs/trial_chapter_brief.md")
 
@@ -637,6 +649,11 @@ def run_drafting(state: dict) -> dict:
         step("試作1章テストだけを実行しました（AUTONOVEL_TRIAL_ONLY=1）")
         return state
     start_chapter = state.get("chapters_drafted", 0) + 1
+    if CHAPTERS_ONLY:
+        # 穴の埋め戻し（AUTONOVEL_CHAPTERS_ONLY=3,5,6）は章番号で直接指定して回す。
+        # state の「どこまで書いたか」より手前の章を書くので、開始位置を先頭に戻す。
+        start_chapter = 1
+        step(f"指定された章だけを書きます: {CHAPTERS_ONLY}（AUTONOVEL_CHAPTERS_ONLY）")
     if MAX_CHAPTERS:
         stage_end = min(total, start_chapter + MAX_CHAPTERS - 1)
         step(f"段階実行: 今回の範囲は 第{start_chapter}章〜第{stage_end}章"
@@ -645,6 +662,8 @@ def run_drafting(state: dict) -> dict:
     CHAPTERS_DIR.mkdir(exist_ok=True)
 
     for ch in range(start_chapter, total + 1):
+        if CHAPTERS_ONLY and ch not in CHAPTERS_ONLY:
+            continue
         if MAX_CHAPTERS and ch > start_chapter + MAX_CHAPTERS - 1:
             save_state(state)
             banner(f"段階実行: {MAX_CHAPTERS}章ぶん書き終えたので一度止めます", "-")
@@ -656,6 +675,19 @@ def run_drafting(state: dict) -> dict:
             stop_for_quota()
         banner(f"Drafting Chapter {ch}/{total}", "-")
         drafted = False
+        # 全試行が不合格のときのために「いちばん良かった稿」を退避しておく（2026-10-08）。
+        # 以前はここで消してしまい、**章そのものが消えて物語に穴が空いた**（実測: 5章が欠落）。
+        best_draft = CHAPTERS_DIR / f".best_ch_{ch:02d}.md"
+        run_tool(f"rm -f {best_draft}")
+        best_score = -1.0
+
+        def keep_if_best(score_now: float) -> None:
+            """破棄する前に、いままでで一番良い稿なら退避しておく。"""
+            nonlocal best_score
+            if not ch_file.exists() or score_now <= best_score:
+                return
+            best_score = score_now
+            run_tool(f"cp chapters/ch_{ch:02d}.md {best_draft}")
 
         for attempt in range(1, MAX_CHAPTER_ATTEMPTS + 1):
             step(f"Attempt {attempt}/{MAX_CHAPTER_ATTEMPTS}")
@@ -709,6 +741,7 @@ def run_drafting(state: dict) -> dict:
                          "この章に未定義キャラが登場しています。破棄して再試行します。")
                     log_result("discarded", f"ch{ch:02d}", score, word_count,
                                "discard", f"Chapter {ch}: character consistency FAILED")
+                    keep_if_best(score)
                     discard_chapter_file(ch)
                     continue
                 # Chapter quality gates — 文体6項目（文字数/セリフ比/最小窓/重複/記号/比喩の型）
@@ -751,6 +784,7 @@ def run_drafting(state: dict) -> dict:
                 if gate.returncode != 0 and not healed:
                     log_result("discarded", f"ch{ch:02d}", score, word_count,
                                "discard", f"Chapter {ch}: quality gates FAILED")
+                    keep_if_best(score)
                     discard_chapter_file(ch)
                     run_tool(f"rm -f chapters/ch_{ch:02d}_repaired.md")
                     continue
@@ -758,7 +792,7 @@ def run_drafting(state: dict) -> dict:
                     f"ch{ch:02d}: score {score}, {word_count}w")
                 log_result(commit_hash, f"ch{ch:02d}", score, word_count,
                            "keep", f"Chapter {ch} (attempt {attempt})")
-                state["chapters_drafted"] = ch
+                state["chapters_drafted"] = max(state.get("chapters_drafted", 0), ch)
                 save_state(state)
                 drafted = True
                 break
@@ -767,21 +801,27 @@ def run_drafting(state: dict) -> dict:
                 log_result("discarded", f"ch{ch:02d}", score, word_count,
                            "discard", f"Chapter {ch} attempt {attempt}")
                 # Remove the bad chapter file so next attempt starts fresh
+                keep_if_best(score)
                 discard_chapter_file(ch)
 
         if not drafted:
             step(f"WARNING: Chapter {ch} failed all {MAX_CHAPTER_ATTEMPTS} attempts, "
-                 f"keeping last attempt and moving on")
-            # Keep whatever we have and commit it
+                 f"keeping the best attempt and moving on")
+            # いちばん良かった稿を戻して残す（穴を空けない）。
+            # 残さないと次章の執筆が「前章なし」で走り、物語が繋がらなくなる（2026-10-08 実測）。
             ch_file = CHAPTERS_DIR / f"ch_{ch:02d}.md"
+            if not ch_file.exists() and best_draft.exists():
+                run_tool(f"mv {best_draft} chapters/ch_{ch:02d}.md")
+                step(f"合格はしませんでしたが、いちばん良かった稿（{best_score}）を残します")
             if ch_file.exists():
                 word_count = len(ch_file.read_text().split())
                 commit_hash = git_add_commit(
                     f"ch{ch:02d}: best-effort after {MAX_CHAPTER_ATTEMPTS} attempts")
-                log_result(commit_hash, f"ch{ch:02d}", "?", word_count,
-                           "forced", f"Chapter {ch}: kept after max attempts")
-                state["chapters_drafted"] = ch
+                log_result(commit_hash, f"ch{ch:02d}", best_score if best_score >= 0 else "?",
+                           word_count, "forced", f"Chapter {ch}: kept after max attempts")
+                state["chapters_drafted"] = max(state.get("chapters_drafted", 0), ch)
                 save_state(state)
+        run_tool(f"rm -f {best_draft}")
 
     # All chapters drafted
     state["phase"] = "revision"
