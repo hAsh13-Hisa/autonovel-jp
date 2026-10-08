@@ -47,8 +47,8 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # 既定で回す機械項目。unused_setting は「全体を見る材料」なので既定では回さない
 # （--only unused_setting で使う。実測: 完成稿では40件出るが、書式ラベルや作例の引用が混ざる）
-MECH_ITEMS = ("late_vanish", "death_then_alive")
-ALL_MECH_ITEMS = ("late_vanish", "unused_setting", "death_then_alive")
+MECH_ITEMS = ("late_vanish", "death_then_alive", "exposition_dialogue")
+ALL_MECH_ITEMS = ("late_vanish", "unused_setting", "death_then_alive", "exposition_dialogue")
 
 HONORIFICS = ("様", "さん", "殿", "ちゃん", "先生", "君", "どの", "ども")
 
@@ -305,8 +305,38 @@ def check_death_then_alive(defined: list, chapters: list,
     return out
 
 
-# ---------------------------------------------------------------- 審査チェック
+# 説明の言い回し（設定・仕組みを説明する台詞に付く語）
+EXPL_PHRASES = ("という", "つまり", "だから", "わけ", "のよ", "なの", "仕組み", "理由", "構造",
+                "はず", "ことになる", "からこそ", "によって", "ために", "というのは",
+                "覚えてお", "知っての", "原理", "理論")
 
+
+def check_exposition_dialogue(chapters: list, min_chars: int = 60, min_lines: int = 4,
+                              warn_ratio: float = 0.5) -> list:
+    """設定や仕組みを説明する長い台詞の比率が高い章を挙げる。
+
+    講評の重大な指摘「世界観の説明を台詞ではなく、視覚描写に分散させよ」に対応する見張り。
+    実測（2026-10-08・第1〜24章）: 60字以上の台詞が4本以上ある章は7つ。そのうち
+    説明の言い回しを含む割合は 第5章0.71・第6章0.55・第9章0.80 と突出し、
+    第2章0.43・第23章0.25 が続いた（＝序盤の世界観説明の章が濃い）。
+    しきい値はその実測に合わせて 0.5（4本以上ある章だけを対象）。
+    """
+    out = []
+    for num, _f, text in chapters:
+        lines = re.findall(r"「([^「」]{1,300})」", text)
+        long_lines = [ln for ln in lines if len(ln) >= min_chars]
+        if len(long_lines) < min_lines:
+            continue
+        exp = [ln for ln in long_lines if any(k in ln for k in EXPL_PHRASES)]
+        ratio = len(exp) / len(long_lines)
+        if ratio >= warn_ratio:
+            out.append({"chapter": num, "ratio": round(ratio, 2),
+                        "expository": len(exp), "long_lines": len(long_lines),
+                        "samples": [ln[:34] for ln in exp[:2]]})
+    return out
+
+
+# ---------------------------------------------------------------- 審査チェック
 JUDGE_SYSTEM = (
     "あなたは日本語小説の整合性を検査する担当です。設定文書と本文を読み、"
     "設定に反する記述・人物の話し方の逸脱・放置された伏線だけを挙げます。"
@@ -406,6 +436,13 @@ def build_report(repo: Path, mech: dict, judged: dict) -> str:
             lines.append(f"  - {it['name']}（第{it['died_in']}章で「{it['mark']}」）→ "
                          f"{it['gap']}章の空白を挟んで第{it['returns_in']}章から台詞・動作あり"
                          f"（以後の手がかり {sum(it['alive_later'])}箇所）")
+    expo = mech.get("exposition_dialogue")
+    if expo is not None:
+        lines.append(f"- 説明台詞の多い章: {len(expo)}件")
+        for it in expo:
+            lines.append(f"  - 第{it['chapter']}章: 長い台詞 {it['long_lines']}本のうち "
+                         f"{it['expository']}本が説明（{it['ratio']}）"
+                         "＝設定を台詞で説明している。地の文・視覚描写へ移す候補")
     if judged:
         lines.append("")
         lines.append("## 審査項目（judge モデル・1章1回）")
@@ -445,6 +482,14 @@ def build_brief(repo: Path, mech: dict, judged: dict) -> str:
                        f"{it['gap']}章の空白を挟んで第{it['returns_in']}章から生きて台詞・動作がある。**"
                        "生きている人物として書かないこと。触れてよいのは、記憶・遺した歌や品・"
                        "残響としての言及（過去形）だけ。その場面の役割は、居合わせる人物と主人公の内面で引き受ける。")
+        out.append("")
+    expo = mech.get("exposition_dialogue") or []
+    if expo:
+        out.append("## 説明台詞の多い章（設定説明を台詞から降ろす）")
+        for it in expo:
+            out.append(f"- 第{it['chapter']}章: 長い台詞 {it['long_lines']}本のうち {it['expository']}本が設定説明。"
+                       "設定は人物に語らせず、**シオンの視覚描写（波形・色・ひずみの変化）と、"
+                       "体に伝わる振動の描写**に移す。説明の台詞は短く切るか、動作で置き換える。")
         out.append("")
     return "\n".join(out)
 
@@ -493,6 +538,8 @@ def main() -> int:
     if "death_then_alive" in only:
         mech["death_then_alive"] = check_death_then_alive(
             extract_defined_names(repo / "characters.md"), chapters)
+    if "exposition_dialogue" in only:
+        mech["exposition_dialogue"] = check_exposition_dialogue(chapters)
 
     judged = {}
     if args.llm:

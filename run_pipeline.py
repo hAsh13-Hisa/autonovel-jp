@@ -949,6 +949,75 @@ def changed_chapters() -> list:
             if p.strip().endswith(".md")]
 
 
+def choose_review_targets(review_data: dict, max_n: int = 3) -> list:
+    """講評の指摘を「効く章」に配る（章0＝全編の指摘にも対応する）。
+
+    実測（2026-10-08）: 講評の重大な指摘は「章0＝全編」で返る（中盤の反復・説明台詞）。
+    いままではそれを『最も弱い1章』にしか配れず、1章直して終わっていた。
+    指摘の言葉と機械の測定（説明台詞の比率）から、効く章の組を選ぶ。
+    """
+    items = review_data.get("professor_items") or []
+    nums = sorted(int(m.group(1)) for m in
+                  (re.search(r"ch_(\d+)", p.name) for p in CHAPTERS_DIR.glob("ch_*.md")) if m)
+    if not nums:
+        return []
+    n_ch = len(nums)
+    early = [c for c in nums if c <= n_ch * 0.3]
+    middle = [c for c in nums if n_ch * 0.3 < c <= n_ch * 0.75]
+    late = [c for c in nums if c > n_ch * 0.75]
+    exposition: list = []
+    try:
+        sys.path.insert(0, str(BASE_DIR))
+        import verify_consistency as vc  # noqa: E402
+        chapters = []
+        for p in sorted(CHAPTERS_DIR.glob("ch_*.md")):
+            m = re.search(r"ch_(\d+)", p.name)
+            if m:
+                chapters.append((int(m.group(1)), p, p.read_text(encoding="utf-8")))
+        exposition = [x["chapter"] for x in vc.check_exposition_dialogue(chapters)]
+    except Exception:
+        exposition = []
+
+    picked: list = []
+    per_item: list = []
+
+    def add(chs):
+        for c in chs:
+            if c not in picked:
+                picked.append(c)
+
+    for it in items:
+        c = int(it.get("chapter") or 0)
+        blob = f"{it.get('title', '')}{it.get('why', '')}{it.get('suggestion', '')}"
+        if c:
+            per_item.append([c])
+        elif any(k in blob for k in ("説明", "設定", "口上", "台詞")):
+            per_item.append(exposition or middle)
+        elif any(k in blob for k in ("結末", "終盤", "エピローグ", "再建", "ラスト", "余韻")):
+            per_item.append(late)
+        elif any(k in blob for k in ("序盤", "前半", "導入", "冒頭")):
+            per_item.append(early)
+        elif any(k in blob for k in ("反復", "繰り返", "中盤", "テンポ", "単調", "同じ展開", "予想")):
+            per_item.append(middle)
+    # 1件の指摘で枠を使い切らないよう、指摘ごとに順番に1章ずつ配る
+    # （実測: 中盤の指摘だけで枠が埋まり、説明台詞の章が選ばれなかった）
+    for depth in range(4):
+        for cands in per_item:
+            if depth < len(cands):
+                add([cands[depth]])
+                if len(picked) >= max_n:
+                    return picked[:max_n]
+    if not picked:
+        try:
+            full = json.loads(sorted(EVAL_LOGS_DIR.glob("*_full.json"))[-1].read_text())
+            weakest = full.get("weakest_chapter")
+            if weakest:
+                add([int(weakest)])
+        except Exception:
+            pass
+    return picked[:max_n]
+
+
 def revision_gate_check(changed: list) -> int:
     """本文を触った直後に章ゲートを回し、FAIL した章を元に戻す（2026-10-03 Hisa決定）。
 
@@ -1300,6 +1369,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             
             # Step 3: Check stopping condition
             total_items = None
+            review_data: dict = {}
             review_logs = sorted(
                 (EDIT_LOGS_DIR).glob("*_review.json"), reverse=True)
             if review_logs:
@@ -1328,34 +1398,37 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                 step("講評から指摘を1件も取れなかったので、この周は何も直しません")
                 break
             
-            # Step 4: Generate briefs from review items and fix
+            # Step 4: 講評の指摘を「効く章」に配って直す
+            # 章0＝全編の指摘（中盤の反復・説明台詞）も、効く章の組に配って複数章を直す。
+            # 実測（2026-10-08）: 1章しか直さない作りだったので、全編の指摘が残り続けていた。
             step("Generating revision briefs from review...")
             gen_brief_py = BASE_DIR / "gen_brief.py"
-            if gen_brief_py.exists():
-                # Auto mode: picks weakest chapter, cross-references all sources
-                run_tool("uv run python gen_brief.py --auto", timeout=300)
-                
-                # Find any generated briefs and apply the top one
-                recent_briefs = sorted(
-                    BRIEFS_DIR.glob("*_auto.md"),
-                    key=lambda p: p.stat().st_mtime, reverse=True)
-                if recent_briefs:
-                    brief = recent_briefs[0]
-                    # Extract chapter number from filename
-                    ch_match = re.search(r'ch(\d+)', brief.name)
-                    if ch_match:
-                        ch_num = int(ch_match.group(1))
-                        if ch_num in revised_in_review:
-                            step(f"Ch {ch_num} はこの講評ループで既に直した章なので、"
-                                 "ここで講評ループを終えます（全編を読み直す費用が見合わないため）")
-                            stop_review_loop = True
-                        else:
-                            revised_in_review.add(ch_num)
-                            step(f"Revising Ch {ch_num} from review brief...")
-                            uv_run(f"gen_revision.py {ch_num} {brief}", timeout=600)
-                            revision_gate_check(changed_chapters())  # 直したら章ゲート
-                            git_add_commit(
-                                f"review round {rnd}: revise ch{ch_num:02d} from Opus feedback")
+            round_revisions = int(os.environ.get("AUTONOVEL_REVIEW_ROUND_REVISIONS", "3"))
+            targets = [c for c in choose_review_targets(review_data, round_revisions)
+                       if c not in revised_in_review]
+            step(f"講評の指摘から直す章: {targets if targets else 'なし'}")
+            if not targets:
+                step("直せる章がもう無いので、ここで講評ループを終えます"
+                     "（全編を読み直す費用が見合わないため）")
+                stop_review_loop = True
+            elif gen_brief_py.exists():
+                for ch_num in targets:
+                    if ch_num in revised_in_review:
+                        continue
+                    if len(revised_in_review) >= MAX_REVISIONS_PER_CYCLE:
+                        step(f"この周で直す章の上限（{MAX_REVISIONS_PER_CYCLE}章）に達したので残りは次周へ")
+                        break
+                    revised_in_review.add(ch_num)
+                    run_tool(f"uv run python gen_brief.py --from-review {ch_num}", timeout=300)
+                    brief = BRIEFS_DIR / f"ch{ch_num:02d}_review.md"
+                    if not brief.exists():
+                        step(f"Ch {ch_num}: 指示書が作れなかったので飛ばします")
+                        continue
+                    step(f"Revising Ch {ch_num} from review brief...")
+                    uv_run(f"gen_revision.py {ch_num} {brief}", timeout=600)
+                    revision_gate_check(changed_chapters())  # 直したら章ゲート
+                    git_add_commit(
+                        f"review round {rnd}: revise ch{ch_num:02d} from review")
             
             # Step 5: Mechanical fixes from review
             # Run slop pass on any mentioned patterns

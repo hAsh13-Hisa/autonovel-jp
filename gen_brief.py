@@ -603,6 +603,84 @@ def build_cuts_brief(ch: int) -> str:
     return brief
 
 
+def latest_review() -> tuple:
+    """いちばん新しい講評（professor_items を持つもの）を返す。"""
+    candidates = sorted(EDIT_LOGS_DIR.glob("*_review.json"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+    for f in candidates:
+        try:
+            d = load_json(f)
+        except Exception:
+            continue
+        if d.get("professor_items"):
+            return f, d
+    return (None, None)
+
+
+def jp_chars(text: str) -> int:
+    """日本語の本文長は字数（空白を除く）。英単語の数え方だと 110 などと出てしまう。"""
+    return len(re.sub(r"\s", "", text))
+
+
+def outline_title(ch: int) -> str:
+    """章立て（outline.md）から見出しを取る。本文には見出し行が無いため。"""
+    p = BASE_DIR / "outline.md"
+    if not p.exists():
+        return ""
+    text = p.read_text(encoding="utf-8")
+    m = re.search(rf"^#+\s*第\s*{ch}\s*章\s*[:：]?\s*(.+)$", text, re.M)
+    return m.group(1).strip() if m else ""
+
+
+def build_review_brief(ch: int) -> str:
+    """講評の指摘から、この章に効くぶんを集めた改訂指示書を作る。
+
+    実測（2026-10-08）: 講評の重大な指摘は「章0＝全編」で返る（中盤の反復・説明台詞）。
+    それを1章にしか配れないと、全編の指摘はいつまでも直らない。
+    ここでは「章0の指摘」も章ごとの指示書に載せ、複数の章に配れるようにする。
+    """
+    path, review = latest_review()
+    if review is None:
+        sys.exit("ERROR: 講評の記録（*_review.json）が見つかりません")
+
+    text = chapter_text(ch)
+    title = outline_title(ch) or chapter_title(text)
+    wc = jp_chars(text)
+    items = review.get("professor_items") or []
+    mine = [it for it in items if (it.get("chapter") or 0) == ch]
+    whole = [it for it in items if not (it.get("chapter") or 0)]
+
+    lines = [f"# 改訂ブリーフ：第{ch}章（講評の指摘から）", ""]
+    lines.append("## この章の情報")
+    lines.append(f"- 見出し: {title}")
+    lines.append(f"- 現在の字数: {wc}字")
+    lines.append("")
+    lines.append(f"## 講評: ★{review.get('stars', '?')} / 指摘 {review.get('total_items', '?')}件"
+                 f"（重大 {review.get('major_items', '?')}）")
+    if mine:
+        lines.append("")
+        lines.append("## この章に直接ついている指摘（必ず直す）")
+        for it in mine:
+            lines.append(f"- [{it.get('severity', '')}] {it.get('title', '')}")
+            if it.get("why"):
+                lines.append(f"  - なぜ: {it['why']}")
+    if whole:
+        lines.append("")
+        lines.append("## 全編についての指摘（この章で反映できる範囲で直す）")
+        for it in whole:
+            lines.append(f"- [{it.get('severity', '')}] {it.get('title', '')}")
+            if it.get("why"):
+                lines.append(f"  - なぜ: {it['why']}")
+    lines.append("")
+    lines.append("## 守ること")
+    lines.append("- 章の目的・場所・章末フックを変えない。字数は現在±400字（下限3,000字）。")
+    lines.append("- 人物の生死を動かさない（死んだ人物を生き返らせない。回想・遺品として触れるのは可）。")
+    lines.append("- 設定の説明を人物の台詞にまとめない（視覚描写・体に伝わる振動の描写に移す）。")
+    lines.append("- 比喩（よう／まるで／みたい）と「……」を増やさない（章ゲートで不合格になる）。")
+    lines.append("- 静かなだけの章にしない。同じ内容を反復しない。冒険活劇としての前進を作る。")
+    return "\n".join(lines) + "\n"
+
+
 def build_auto_brief() -> tuple[int, str]:
     """Auto-detect weakest chapter and build a combined brief."""
     full_eval_path = latest_full_eval()
@@ -800,6 +878,8 @@ def main():
                         help="Generate brief from adversarial cuts for chapter CH")
     parser.add_argument("--auto", action="store_true",
                         help="Auto-detect weakest chapter and generate combined brief")
+    parser.add_argument("--from-review", type=int, metavar="N",
+                        help="講評の指摘から第N章の改訂指示書を作る（章0＝全編の指摘も載せる）")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print brief to stdout without saving")
 
@@ -811,12 +891,13 @@ def main():
         args.eval is not None,
         args.cuts is not None,
         args.auto,
+        args.from_review is not None,
     ])
     if modes == 0:
         parser.print_help()
         sys.exit(1)
     if modes > 1:
-        sys.exit("ERROR: specify exactly one of --panel, --eval, --cuts, --auto")
+        sys.exit("ERROR: specify exactly one of --panel, --eval, --cuts, --auto, --from-review")
 
     # Generate
     if args.panel is not None:
@@ -831,6 +912,10 @@ def main():
         ch = args.cuts
         brief_text = build_cuts_brief(ch)
         suffix = "cuts"
+    elif args.from_review is not None:
+        ch = args.from_review
+        brief_text = build_review_brief(ch)
+        suffix = "review"
     else:  # --auto
         ch, brief_text = build_auto_brief()
         suffix = "auto"
