@@ -882,7 +882,9 @@ def parse_panel_consensus(panel_path: Path) -> list[dict]:
             answer = answers.get(question, "")
             if not isinstance(answer, str):
                 continue
-            chs = re.findall(r'Ch(?:apter)?\s*(\d+)', answer, re.IGNORECASE)
+            # 「Ch 5」「Chapter 5」「第5章」のどれでも拾う（日本語で答えさせているため）
+            found = re.findall(r'Ch(?:apter)?\s*(\d+)|第\s*(\d+)\s*章', answer, re.IGNORECASE)
+            chs = [a or b for a, b in found]
             for ch_str in chs:
                 ch_num = int(ch_str)
                 key = (ch_num, question)
@@ -928,6 +930,9 @@ ELO_TIMEOUT = int(os.environ.get("AUTONOVEL_ELO_TIMEOUT", "600"))
 # 強みの移植（改訂の向きを逆にする＝天井を上げる）。0 で無効化。
 STRENGTH = os.environ.get("AUTONOVEL_STRENGTH", "1") != "0"
 STRENGTH_MAX_BRIEFS = int(os.environ.get("AUTONOVEL_STRENGTH_MAX_BRIEFS", "2"))
+# 1周で直す章数の上限。指摘が多くても費用が暴走しないように、指摘の多い順に絞る
+# （1章の改訂は 改訂前評価→指示書→整合→本文→ゲート→改訂後評価→一対比較 で約10万トークン）。
+MAX_REVISIONS_PER_CYCLE = int(os.environ.get("AUTONOVEL_MAX_REVISIONS_PER_CYCLE", "6"))
 STRENGTH_TIMEOUT = int(os.environ.get("AUTONOVEL_STRENGTH_TIMEOUT", "900"))
 
 
@@ -1090,6 +1095,11 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                     step(f"  移植の対象に追加: Ch {s_num}（{sf.name}）")
 
         # -- Step 5: Targeted revisions for consensus items --
+        if len(consensus_items) > MAX_REVISIONS_PER_CYCLE:
+            step(f"指摘が {len(consensus_items)} 章に及ぶので、この周は指摘の多い順に"
+                 f"{MAX_REVISIONS_PER_CYCLE} 章まで直します")
+            consensus_items = consensus_items[:MAX_REVISIONS_PER_CYCLE]
+
         for idx, item in enumerate(consensus_items):
             ch_num = item["chapter"]
             question = item["question"]
@@ -1263,6 +1273,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         banner("PHASE 3b: OPUS REVIEW LOOP", "=")
         
         max_review_rounds = 4
+        revised_in_review = set()   # 同じ章を何周も直さない（講評が同じ章を指し続けても痩せるだけ）
         for rnd in range(1, max_review_rounds + 1):
             banner(f"Opus Review Round {rnd}/{max_review_rounds}", "-")
             
@@ -1278,6 +1289,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             print(parse_result.stdout if parse_result else "")
             
             # Step 3: Check stopping condition
+            total_items = None
             review_logs = sorted(
                 (EDIT_LOGS_DIR).glob("*_review.json"), reverse=True)
             if review_logs:
@@ -1298,6 +1310,13 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                 if stars >= 4 and total_items > 0 and qualified / total_items > 0.5:
                     step(f"★{'★' * int(stars)} with majority qualified items — novel is ready.")
                     break
+
+            # 講評から指摘を1件も取れなかったら、ここで止める。
+            # 取れないまま先へ進むと「無い指摘」を作り話にして本文を削ってしまう
+            # （2026-10-08 実測: 第14章が 4,680字 → 2,797字 まで痩せた）。
+            if total_items == 0:
+                step("講評から指摘を1件も取れなかったので、この周は何も直しません")
+                break
             
             # Step 4: Generate briefs from review items and fix
             step("Generating revision briefs from review...")
@@ -1316,10 +1335,15 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                     ch_match = re.search(r'ch(\d+)', brief.name)
                     if ch_match:
                         ch_num = int(ch_match.group(1))
-                        step(f"Revising Ch {ch_num} from review brief...")
-                        uv_run(f"gen_revision.py {ch_num} {brief}", timeout=600)
-                        git_add_commit(
-                            f"review round {rnd}: revise ch{ch_num:02d} from Opus feedback")
+                        if ch_num in revised_in_review:
+                            step(f"Ch {ch_num} はこの講評ループで既に直した章なので飛ばします")
+                        else:
+                            revised_in_review.add(ch_num)
+                            step(f"Revising Ch {ch_num} from review brief...")
+                            uv_run(f"gen_revision.py {ch_num} {brief}", timeout=600)
+                            revision_gate_check(changed_chapters())  # 直したら章ゲート
+                            git_add_commit(
+                                f"review round {rnd}: revise ch{ch_num:02d} from Opus feedback")
             
             # Step 5: Mechanical fixes from review
             # Run slop pass on any mentioned patterns
@@ -1329,6 +1353,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                 run_tool(
                     "uv run python apply_cuts.py all --types OVER-EXPLAIN REDUNDANT --min-fat 15",
                     timeout=300)
+                revision_gate_check(changed_chapters())  # 削った後も章ゲート
                 git_add_commit(f"review round {rnd}: mechanical cleanup")
             
             step(f"Review round {rnd} complete.")

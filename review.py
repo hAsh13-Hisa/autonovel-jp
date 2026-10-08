@@ -31,9 +31,22 @@ import llm
 CHAPTERS_DIR = BASE_DIR / "chapters"
 LOGS_DIR = BASE_DIR / "edit_logs"
 
-REVIEW_PROMPT = """Read the below novel, "{title}". Review it first as a literary critic (like a newspaper book review) and then as a professor of fiction. In the later review, give specific, actionable suggestions for any defects you find. Be fair but honest. You don't *have* to find defects.
+REVIEW_PROMPT = """以下の小説「{title}」を読み、2つの立場で講評してください。
 
-{manuscript}"""
+(1) 文芸評論家として — 新聞の書評のように、この作品の到達点と弱点を論じる。評点は★の5段階で示す。
+(2) 小説作法の教授として — 直すべき欠陥を、**該当する章番号つきで**具体的に挙げる。欠陥が無いなら「無い」と書く。
+
+{manuscript}
+
+最後に、次の形の JSON を**1つだけ**出してください（JSONの前後に文章を書かないこと）。
+章番号は必ず入れてください（作品全体に関わる指摘は "章": 0 にしてください）。
+
+{{
+  "評点": 4.0,
+  "重大な指摘": [{{"章": 12, "提案": "どう直すか", "理由": "なぜそう言えるか"}}],
+  "軽微な指摘": [{{"章": 5, "提案": "どう直すか", "理由": "なぜそう言えるか"}}]
+}}
+"""
 
 
 def call_opus(prompt, max_tokens=8000):
@@ -78,8 +91,75 @@ def build_manuscript():
     return manuscript
 
 
+def _extract_json_block(text):
+    """応答から最初の JSON オブジェクトを取り出す（```json フェンスも許す）。"""
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    candidate = fence.group(1) if fence else None
+    if candidate is None:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        candidate = text[start:end + 1]
+    try:
+        return json.loads(candidate)
+    except Exception:
+        return None
+
+
+def _norm_item(raw, severity, number):
+    """指摘1件を内部の形に揃える（辞書でもただの文字列でも受ける）。"""
+    if isinstance(raw, dict):
+        chapter = raw.get("章", raw.get("chapter", 0))
+        proposal = raw.get("提案") or raw.get("suggestion") or raw.get("改善") or ""
+        why = raw.get("理由") or raw.get("why") or raw.get("reason") or ""
+        title = raw.get("題") or raw.get("title") or proposal
+    else:
+        chapter, proposal, why = 0, str(raw), ""
+        title = str(raw)
+    m = re.search(r"\d+", str(chapter))
+    chapter = int(m.group(0)) if m else 0
+    return {
+        "number": number,
+        "title": str(title).strip()[:120],
+        "chapter": chapter,
+        "severity": severity,
+        "type": "revision",
+        "qualified": False,
+        "suggestion": str(proposal).strip()[:500],
+        "why": str(why).strip()[:500],
+        "full_text": (str(proposal) + (" ／ " + str(why) if why else ""))[:1000],
+    }
+
+
 def parse_review(review_text):
     """Parse a review into structured actionable items."""
+    # 先に JSON 形式（いまのプロンプトが要求する形）を読む。日本語のキーでも
+    # 「1件も取れない」ことが無いように、新旧のキー名を両方受ける。
+    block = _extract_json_block(review_text)
+    if isinstance(block, dict):
+        items = []
+        for key, sev in (("重大な指摘", "major"), ("軽微な指摘", "minor"),
+                         ("top_3_improvements", "major"), ("改善提案", "moderate")):
+            for raw in (block.get(key) or []):
+                items.append(_norm_item(raw, sev, len(items) + 1))
+        raw_stars = block.get("評点", block.get("stars"))
+        stars = None
+        if raw_stars is not None:
+            m = re.search(r"\d+(?:\.\d+)?", str(raw_stars))
+            stars = float(m.group(0)) if m else None
+        summary = (block.get("note") or block.get("critic_summary")
+                   or block.get("総評") or block.get("reasons") or "")
+        if items or stars or summary:
+            return {
+                "stars": stars,
+                "critic_summary": str(summary).strip()[:500],
+                "professor_items": items,
+                "total_items": len(items),
+                "major_items": sum(1 for i in items if i["severity"] == "major"),
+                "qualified_items": sum(1 for i in items if i["qualified"]),
+                "raw_text": review_text,
+            }
+
     items = []
     
     # Split into critic and professor sections
@@ -97,26 +177,28 @@ def parse_review(review_text):
         stars = star_str.count('★') + (0.5 if '½' in star_str else 0)
     
     # Extract professor's numbered items
-    # Look for patterns like "1. Title" or "Problem:" or "Suggestion:"
-    prof_items = re.split(r'\n(?=\d+\.\s+[A-Z])', professor_text)
+    # Look for patterns like "1. Title" / "1. 見出し" / "1、見出し"
+    prof_items = re.split(r'\n(?=\d+[.．、)]\s*\S)', professor_text)
     
     for section in prof_items:
         if not section.strip():
             continue
         
         # Extract the item title/number
-        title_match = re.match(r'(\d+)\.\s+(.+?)(?:\n|$)', section)
+        title_match = re.match(r'(\d+)[.．、)]\s*(.+?)(?:\n|$)', section)
         if not title_match:
             continue
         
         num = int(title_match.group(1))
         title = title_match.group(2).strip()
         
-        # Classify severity based on language
+        # Classify severity based on language（日本語の言い回しも見る）
         text_lower = section.lower()
-        if any(w in text_lower for w in ['major', 'significant', 'primary', 'most important']):
+        if any(w in text_lower for w in ['major', 'significant', 'primary', 'most important',
+                                         '重大', '致命的', '最重要', '根本的']):
             severity = "major"
-        elif any(w in text_lower for w in ['minor', 'small', 'slight', 'cosmetic']):
+        elif any(w in text_lower for w in ['minor', 'small', 'slight', 'cosmetic',
+                                           '軽微', '些細', 'わずか', '小さな']):
             severity = "minor"
         else:
             severity = "moderate"
