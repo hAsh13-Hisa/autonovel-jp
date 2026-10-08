@@ -46,6 +46,11 @@ CHAPTER_THRESHOLD = float(os.environ.get("AUTONOVEL_CHAPTER_THRESHOLD", "6.0"))
 # （却下された生原稿に 4.7、人手で仕上げた章に 7.8、走行中の初稿に 8.0）。
 # 4.0 のままだと弱い章も通ってしまうので、**6.0 に戻した**。
 # 手元モデルを使うときはこの値を実測で校正する（上げすぎると作り直しが増えて高くつく）。
+# 判定（evaluate.py）1回に許す時間。既定300秒。
+# 2026-10-08 実測: 手元のローカルモデルが**GPUに載らずCPUで動くと1回が数十分**かかり、
+# 300秒で切れて「評価の失敗」として走行が止まった。遅い判定を使うときはここを上げる
+# （例: AUTONOVEL_EVAL_TIMEOUT=900）。
+EVAL_TIMEOUT = int(os.environ.get("AUTONOVEL_EVAL_TIMEOUT", "300"))
 MAX_FOUNDATION_ITERS = 20
 MAX_CHAPTER_ATTEMPTS = 5
 # 判定（judge）の応答が読めないときのやり直し回数。すべて失敗したら
@@ -398,7 +403,7 @@ def run_foundation(state: dict) -> dict:
         lore = -1.0
         eval_result = None
         for eval_attempt in range(1, MAX_JUDGE_TRIES + 1):
-            eval_result = uv_run("evaluate.py --phase=foundation", timeout=300)
+            eval_result = uv_run("evaluate.py --phase=foundation", timeout=EVAL_TIMEOUT)
             score = parse_score(eval_result.stdout, "overall_score")
             lore = parse_lore_score(eval_result.stdout)
             if score >= 0:
@@ -582,7 +587,7 @@ def trial_chapter_test(state: dict, total: int) -> tuple:
     score = -1.0
     ev = None
     for _ in range(MAX_JUDGE_TRIES):
-        ev = uv_run(f"evaluate.py --chapter={ch}", timeout=300)
+        ev = uv_run(f"evaluate.py --chapter={ch}", timeout=EVAL_TIMEOUT)
         score = parse_score(ev.stdout, "overall_score")
         if score >= 0:
             break
@@ -603,6 +608,21 @@ def trial_chapter_test(state: dict, total: int) -> tuple:
     verdict = ("章ゲートで不合格" if not gates_ok
                else f"章ゲートは通ったが判定スコアが低い（{score}）")
     return _trial_fail(state, ch_file, gate.stdout or "", repair_out, score, verdict)
+
+
+def discard_chapter_file(ch: int) -> None:
+    """捨てると決めた章の原稿を確実に消す（2026-10-08）。
+
+    `git checkout --` は**追跡されている**ファイルしか戻せない。まだ一度もコミットして
+    いない章（最初の試行で落ちた章）は戻せず、その場に残る。残ると
+    `AUTONOVEL_REUSE_DRAFT=1` が「捨てたはずの原稿」を拾い、同じ章を評価し続ける。
+    """
+    rel = f"chapters/ch_{ch:02d}.md"
+    run_tool(f"git checkout -- {rel} 2>/dev/null || true")
+    if (BASE_DIR / rel).exists():
+        tracked = run_tool(f"git ls-files --error-unmatch {rel} 2>/dev/null").returncode == 0
+        if not tracked:
+            run_tool(f"rm -f {rel}")
 
 
 def run_drafting(state: dict) -> dict:
@@ -668,7 +688,7 @@ def run_drafting(state: dict) -> dict:
             score = -1.0
             eval_result = None
             for eval_attempt in range(1, MAX_JUDGE_TRIES + 1):
-                eval_result = uv_run(f"evaluate.py --chapter={ch}", timeout=300)
+                eval_result = uv_run(f"evaluate.py --chapter={ch}", timeout=EVAL_TIMEOUT)
                 score = parse_score(eval_result.stdout, "overall_score")
                 if score >= 0:
                     break
@@ -689,8 +709,7 @@ def run_drafting(state: dict) -> dict:
                          "この章に未定義キャラが登場しています。破棄して再試行します。")
                     log_result("discarded", f"ch{ch:02d}", score, word_count,
                                "discard", f"Chapter {ch}: character consistency FAILED")
-                    if ch_file.exists():
-                        run_tool(f"git checkout -- chapters/ch_{ch:02d}.md 2>/dev/null || true")
+                    discard_chapter_file(ch)
                     continue
                 # Chapter quality gates — 文体6項目（文字数/セリフ比/最小窓/重複/記号/比喩の型）
                 # 破棄するのは GATE_WARN_ITEMS 以外の項目（既定: 文字数・重複・記号・比喩の型）。
@@ -732,8 +751,7 @@ def run_drafting(state: dict) -> dict:
                 if gate.returncode != 0 and not healed:
                     log_result("discarded", f"ch{ch:02d}", score, word_count,
                                "discard", f"Chapter {ch}: quality gates FAILED")
-                    if ch_file.exists():
-                        run_tool(f"git checkout -- chapters/ch_{ch:02d}.md 2>/dev/null || true")
+                    discard_chapter_file(ch)
                     run_tool(f"rm -f chapters/ch_{ch:02d}_repaired.md")
                     continue
                 commit_hash = git_add_commit(
@@ -749,8 +767,7 @@ def run_drafting(state: dict) -> dict:
                 log_result("discarded", f"ch{ch:02d}", score, word_count,
                            "discard", f"Chapter {ch} attempt {attempt}")
                 # Remove the bad chapter file so next attempt starts fresh
-                if ch_file.exists():
-                    run_tool(f"git checkout -- chapters/ch_{ch:02d}.md 2>/dev/null || true")
+                discard_chapter_file(ch)
 
         if not drafted:
             step(f"WARNING: Chapter {ch} failed all {MAX_CHAPTER_ATTEMPTS} attempts, "
