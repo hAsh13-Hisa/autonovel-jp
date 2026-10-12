@@ -935,6 +935,18 @@ STRENGTH_MAX_BRIEFS = int(os.environ.get("AUTONOVEL_STRENGTH_MAX_BRIEFS", "2"))
 MAX_REVISIONS_PER_CYCLE = int(os.environ.get("AUTONOVEL_MAX_REVISIONS_PER_CYCLE", "6"))
 STRENGTH_TIMEOUT = int(os.environ.get("AUTONOVEL_STRENGTH_TIMEOUT", "900"))
 
+# 骨格（幕構成・章立て）を作り直す工程（章や範囲の書き直しでは消えない指摘に効かせる）。
+# 章数を変えるので費用が大きい。既定は「止まって設計だけ出す」＝人間が設計を見て判断する。
+#   plan（既定）: 骨格の設計を briefs/arc_rebuild_plan.json に出して止まる
+#   apply:       設計を採用して骨格と本文を作り直す
+#   off:         回さない
+ARC_REBUILD = os.environ.get("AUTONOVEL_ARC_REBUILD", "plan")
+ARC_REBUILD_TIMEOUT = int(os.environ.get("AUTONOVEL_ARC_REBUILD_TIMEOUT", "1800"))
+# 骨格の作り直しを「何周目以降」に回すか。1周目は章の中の指摘を先に直したいので既定は2周目。
+ARC_REBUILD_FROM_CYCLE = int(os.environ.get("AUTONOVEL_ARC_REBUILD_FROM_CYCLE", "2"))
+# 骨格の指摘がこの周数だけ続いたら作り直す（同じ指摘が形を変えて出続ける＝骨格の問題）。
+ARC_REBUILD_PERSIST_ROUNDS = int(os.environ.get("AUTONOVEL_ARC_REBUILD_PERSIST_ROUNDS", "2"))
+
 
 def gate_cmd_for(path: str) -> str:
     """章ゲート（文体6項目）を1ファイルにかけるコマンド。"""
@@ -1391,13 +1403,62 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                     step(f"★{'★' * int(stars)} with majority qualified items — novel is ready.")
                     break
 
-            # 講評から指摘を1件も取れなかったら、ここで止める。
+            # 講評から指摘を1件も取れなかったら、ここで止まる。
             # 取れないまま先へ進むと「無い指摘」を作り話にして本文を削ってしまう
             # （2026-10-08 実測: 第14章が 4,680字 → 2,797字 まで痩せた）。
             if total_items == 0:
                 step("講評から指摘を1件も取れなかったので、この周は何も直しません")
                 break
-            
+
+            # -- Step 3.5: 骨格（幕構成・章立て）を作り直すべきかを判定する --
+            # 講評の「全編の構成」の指摘（似た展開の反復・山場が1点に定まらない）は、
+            # 章の書き直しでも章をまたぐ編集でも消えない。実測（2026-10-08）:
+            # 3周まわっても同じ指摘が形を変えて出続け、★も 3.0〜3.5 のまま動かなかった。
+            # → 骨格の指摘が続いた周で rebuild_arc.py を回す（章数を変える工程）。
+            if ARC_REBUILD != "off":
+                rebuild_py = BASE_DIR / "rebuild_arc.py"
+                struct = []
+                try:
+                    sys.path.insert(0, str(BASE_DIR))
+                    import rebuild_arc as _ra  # noqa: E402
+                    struct = _ra.structural_items(review_data)
+                except Exception:
+                    struct = []
+                if not rebuild_py.exists():
+                    step("rebuild_arc.py が無いので骨格の作り直しは回しません")
+                elif struct and rnd >= ARC_REBUILD_PERSIST_ROUNDS:
+                    step(f"骨格（構成）の指摘が {rnd}周続いています（{len(struct)}件）。"
+                         "章や範囲の書き直しでは消えない種類なので、骨格を作り直します")
+                    plan_file = BRIEFS_DIR / "arc_rebuild_plan.json"
+                    if ARC_REBUILD == "apply" and plan_file.exists():
+                        # 設計が人手で確認ずみ（ファイルが存在する）なので採用して作り直す
+                        res = run_tool(f"uv run python rebuild_arc.py "
+                                       f"--plan-file {plan_file} --apply",
+                                       timeout=ARC_REBUILD_TIMEOUT * 24)
+                        step(f"骨格を作り直しました（exit {res.returncode}）")
+                        print((res.stdout or "")[-2000:])
+                        # rebuild_arc.py は章数を変えて state.json を書き直すので、
+                        # サブプロセスの結果を読み直す（メモリの古い章数で上書きすると齟齬る）
+                        reloaded = load_state()
+                        if reloaded:
+                            state = reloaded
+                            print(f"  章数を読み直しました: "
+                                  f"{count_chapter_files()}章 / 章立て {get_total_chapters(state)}章")
+                        revised_in_review.clear()   # 章番号が変わったので記憶をリセット
+                        stop_review_loop = True    # 作り直した後は改訂からやり直す
+                    else:
+                        # 設計だけ出して止まる（章数を変えるので人間の確認を取る）
+                        res = run_tool("uv run python rebuild_arc.py --from-review",
+                                       timeout=ARC_REBUILD_TIMEOUT)
+                        print((res.stdout or "")[-2500:])
+                        step("骨格の設計を出しました。この工程は章数を変えるので、"
+                             f"設計（{plan_file}）を確認してから "
+                             "AUTONOVEL_ARC_REBUILD=apply で実行してください")
+                        stop_review_loop = True
+
+            if stop_review_loop:
+                break
+
             # Step 4: 講評の指摘を「効く章」に配って直す
             # 章0＝全編の指摘（中盤の反復・説明台詞）も、効く章の組に配って複数章を直す。
             # 実測（2026-10-08）: 1章しか直さない作りだったので、全編の指摘が残り続けていた。
