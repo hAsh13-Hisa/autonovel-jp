@@ -87,6 +87,12 @@ DRAFT_TIMEOUT = int(os.environ.get("AUTONOVEL_DRAFT_TIMEOUT", "3600"))
 TARGET_WORDS = int(os.environ.get("AUTONOVEL_TARGET_WORDS", "0"))
 # 目標の何%を下回ったら警告するか（既定 0.9＝10%以上不足で警告）。
 TARGET_WORDS_MIN_RATIO = float(os.environ.get("AUTONOVEL_TARGET_WORDS_MIN_RATIO", "0.9"))
+# 目標字数が未設定のときの1章あたりの字数の目安。
+# なぜ自動算出にするか: 目標字数は作品ごとに作者が決めるものだが、毎回決めるのは手間なので、
+# 章数から出すデフォルトを用意した（実測 2026-10-13: 作り直し後の1章平均は3,560字で、
+# これは薄まりすぎだった。元の24章は1章3,894字だった）。
+#   0 を指定すると自動算出をやめる（＝検査しない）。
+DEFAULT_WORDS_PER_CHAPTER = int(os.environ.get("AUTONOVEL_DEFAULT_WORDS_PER_CHAPTER", "5000"))
 
 
 def thinnest_chapters(exclude: int = 0, limit: int = 3) -> list:
@@ -117,7 +123,13 @@ def thinnest_chapters(exclude: int = 0, limit: int = 3) -> list:
 
 
 def target_words_for(state: dict) -> int:
-    """目標字数。state.json の target_words が env より優先（作品ごとに変えられる）。"""
+    """目標字数。解決順: state.json の target_words → env AUTONOVEL_TARGET_WORDS
+    → 章数 × 1章あたりの目安（自動算出）。
+
+    自動算出にする理由: 目標字数は本来作者が決めるものだが、毎回決めるのは手間。
+    未設定でも薄まりすぎを検出できるように、章数から出す。実測 2026-10-13 では
+    作り直し後の1章平均3,560字が薄まりすぎだった（元は3,894字）。
+    """
     for src in (state or {}, os.environ):
         val = src.get("target_words") if isinstance(src, dict) else src.get("AUTONOVEL_TARGET_WORDS")
         if val:
@@ -127,6 +139,10 @@ def target_words_for(state: dict) -> int:
                     return n
             except (TypeError, ValueError):
                 pass
+    if DEFAULT_WORDS_PER_CHAPTER > 0 and CHAPTERS_DIR.exists():
+        n_ch = len(list(CHAPTERS_DIR.glob("ch_*.md")))
+        if n_ch:
+            return n_ch * DEFAULT_WORDS_PER_CHAPTER
     return TARGET_WORDS
 
 # 初稿（drafting）の章ゲートで「記録のみ＝破棄条件にしない」項目。
