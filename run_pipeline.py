@@ -78,6 +78,57 @@ DRAFTER = os.environ.get("AUTONOVEL_DRAFTER", "draft_chapter_split.py")
 # 単発ドラフターより遥かに長い。10分では足りない。
 DRAFT_TIMEOUT = int(os.environ.get("AUTONOVEL_DRAFT_TIMEOUT", "3600"))
 
+# ── 全編の目標字数（作り直し後の「薄まり」を防ぐ）────────────────────
+# なぜ必要か（実測 2026-10-13）: セリフ比の検査を入れたら、改訂が「説明を会話に
+# 置き換えろ」と動いて地の文が減り、24章93,466字 → 17章60,520字（35%減）になった。
+# 章ごとの下限（1章3,000字）は守られていても、総量はどこも見ていなかった。
+# → 目標字数を置き、サイクルごとに達しなければ膨らませの指示を出す。
+#   0 または未設定なら検査しない（従来どおり）。
+TARGET_WORDS = int(os.environ.get("AUTONOVEL_TARGET_WORDS", "0"))
+# 目標の何%を下回ったら警告するか（既定 0.9＝10%以上不足で警告）。
+TARGET_WORDS_MIN_RATIO = float(os.environ.get("AUTONOVEL_TARGET_WORDS_MIN_RATIO", "0.9"))
+
+
+def thinnest_chapters(exclude: int = 0, limit: int = 3) -> list:
+    """地の文（＝会話でない部分）の割合が大きい章を返す。
+
+    なぜ: セリフ比の検査が効きすぎて地の文が減り全体が薄まった（実測 2026-10-13）。
+    膨らませるときは「会話が薄い章」ではなく**地の文の厚い章**を足す先に選ぶ
+    （会話が薄い章は既に地の文だらけなので、そこに足すと更に説明臭くなる）。
+    """
+    rows = []
+    if not CHAPTERS_DIR.exists():
+        return rows
+    for f in sorted(CHAPTERS_DIR.glob("ch_*.md")):
+        try:
+            num = int(f.stem.split("_")[-1])
+        except ValueError:
+            continue
+        if num == exclude:
+            continue
+        text = f.read_text(encoding="utf-8")
+        total = jp_char_count(text)
+        if total <= 0:
+            continue
+        dlg = sum(jp_char_count(m) for m in re.findall(r"「[^」]*」", text))
+        rows.append((1 - dlg / total, num))
+    rows.sort(reverse=True)
+    return [n for _r, n in rows[:limit]]
+
+
+def target_words_for(state: dict) -> int:
+    """目標字数。state.json の target_words が env より優先（作品ごとに変えられる）。"""
+    for src in (state or {}, os.environ):
+        val = src.get("target_words") if isinstance(src, dict) else src.get("AUTONOVEL_TARGET_WORDS")
+        if val:
+            try:
+                n = int(val)
+                if n > 0:
+                    return n
+            except (TypeError, ValueError):
+                pass
+    return TARGET_WORDS
+
 # 初稿（drafting）の章ゲートで「記録のみ＝破棄条件にしない」項目。
 # 破棄条件に残すのは 文字数・重複・記号・比喩の型（＝修正が効く欠陥）。
 # セリフ比・最小窓は「完成稿の物さし」で、生原稿は落ちるのが普通（実測 2026-10-03:
@@ -1351,6 +1402,22 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                 # 比率が 0.55→0.55 と動かなかった。原因はブリーフに実際の台詞が無く、
                 # 「同じ調子で書き直される」だけだったため。→ 台詞を出し、現在値も書く。
                 extra = append_exposition_note(extra, ch_num)
+                # 全編の字数が目標に届いていないとき、膨らませの指示を足す。
+                # 実測 2026-10-13: セリフ比の検査が効きすぎて 35% 薄まった。
+                # 不足分は総量なので1章で埋めるのではなく、薄い章から順に足す。
+                short = state.get("word_shortfall")
+                if short:
+                    thin = thinnest_chapters(ch_num, limit=3)
+                    hint = ["## 全編の字数が目標に届いていません（地の文を足して膨らませる）",
+                            f"- 不足: 約{int(short):,}字（前の周の測定）",
+                            "- 直し方: 会話を増やすのではなく**地の文・情景・内面の描写を足す**。",
+                            "  （セリフ比は既に足りているので、会話を増やすと比率が崩れます）"]
+                    if thin:
+                        hint.append("- この章は地の文（情景・内面の描写）が厚い章の一つです。")
+                        hint.append("  ここに情景や内面を足すと、説明臭くならずに字数を戻せます:")
+                        for t in thin:
+                            hint.append(f"  - 第{t}章")
+                    extra = (extra + "\n\n" + "\n".join(hint)) if extra else "\n".join(hint)
                 if extra:
                     with open(brief_file, "a", encoding="utf-8") as fh:
                         fh.write("\n\n" + extra + "\n")
@@ -1436,6 +1503,19 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
 
         total_words = count_words_in_chapters()
         step(f"Novel score: {novel_score}  (prev: {prev_score}, 字数: {total_words})")
+
+        # 全編の目標字数に対する不足（作り直しで薄まりすぎていないか）
+        tw = target_words_for(state)
+        if tw:
+            ratio = total_words / tw
+            if ratio < TARGET_WORDS_MIN_RATIO:
+                short = tw - total_words
+                state["word_shortfall"] = short
+                step(f"字数が目標に対して {short:,}字 不足（{total_words:,} / 目標 {tw:,} "
+                     f"= {ratio*100:.0f}%）— 次の周のブリーフで膨らませます")
+            else:
+                state.pop("word_shortfall", None)
+                step(f"字数は目標の {ratio*100:.0f}%（{total_words:,} / 目標 {tw:,}）")
 
         # Commit cycle results
         commit_hash = git_add_commit(
