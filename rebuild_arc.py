@@ -327,7 +327,13 @@ def validate_plan(plan: dict, old_nums: list) -> list:
         errors.append("新しい章番号が重複しています")
 
     # 元の章の取りこぼし（内容がどこにも行かない＝物語に穴が空く）
-    dropped = {int(d.get("章", 0)) for d in (plan.get("削除する章") or [])}
+    # 削除の「章」は LLM が書く自由記述なので、数字だけを拾う。
+    # 実測 2026-10-13: "旧第旧第14章（再登場シーン含む）" がそのまま入り
+    # int() が ValueError で落ち、設計の検算が動かなかった（= 検算をすり抜ける）。
+    dropped = set()
+    for d in (plan.get("削除する章") or []):
+        for n in re.findall(r"\d+", str(d.get("章", ""))):
+            dropped.add(int(n))
     used = []
     for e in chapters:
         for src in (e.get("元の章") or []):
@@ -342,6 +348,19 @@ def validate_plan(plan: dict, old_nums: list) -> list:
     unknown = [c for c in used if c not in old_nums]
     if unknown:
         errors.append(f"存在しない元の章を参照しています: {unknown}")
+
+    # 元の章の重複（同じ章を2つの新章が参照すると、同じ場面を2回書くことになる）
+    # 実測 2026-10-13: 新第12章=[16,17]・新第13章=[15,16,17] で 16・17 が二重に入り、
+    # ルナの最期が2章に重複して載る設計が検算をすり抜けた。
+    dupe = sorted({c for c in used if used.count(c) > 1})
+    if dupe:
+        where = []
+        for e in chapters:
+            hit = [int(s) for s in (e.get("元の章") or []) if str(s).isdigit()
+                   and int(s) in dupe]
+            if hit:
+                where.append(f"新第{e.get('新しい章')}章={hit}")
+        errors.append(f"元の章が重複しています（同じ場面を2回書くことになる）: {dupe} — {' / '.join(where)}")
 
     # 山場は1つだけ・静かな章は上限まで
     peaks = [int(e.get("新しい章", 0)) for e in chapters if e.get("山場")]
