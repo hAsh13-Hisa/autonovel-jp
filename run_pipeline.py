@@ -80,11 +80,24 @@ DRAFT_TIMEOUT = int(os.environ.get("AUTONOVEL_DRAFT_TIMEOUT", "3600"))
 
 # 初稿（drafting）の章ゲートで「記録のみ＝破棄条件にしない」項目。
 # 破棄条件に残すのは 文字数・重複・記号・比喩の型（＝修正が効く欠陥）。
-# セリフ比・最小窓は「完成稿の物差し」で、生原稿は落ちるのが普通（実測 2026-10-03:
+# セリフ比・最小窓は「完成稿の物さし」で、生原稿は落ちるのが普通（実測 2026-10-03:
 # 生原稿は6項目中3項目FAIL／人手ポリッシュ後の採用版は全PASS）。
 # 初稿でこれらを破棄条件にすると1章あたり最大15回の章生成を消費して無駄になる。
 # 手動で完成稿を検査するときは未指定（＝全項目が合否対象）にする。
 GATE_WARN_ITEMS = os.environ.get("AUTONOVEL_GATE_WARN_ITEMS", "dialogue_ratio,min_window")
+
+# 改訂（revision）の章ゲートで「記録のみ」にする項目。**既定は空＝全項目が合否対象。**
+#
+# なぜ分けたか（実測 2026-10-08）: 講評の「説明を台詞でなく描写で」に従って章を
+# 書き直すと、セリフ比が50%未満に落ちた章が6章・最小窓30%未満が11章に出た
+# （初稿はそれぞれ1章・0章）。ところが改訂のゲートも GATE_WARN_ITEMS を共有して
+# いたため、ヒサ品質ルール（セリフ比・最小窓）が改訂中は警告どまり＝抜け穴だった。
+# 生原稿を落とさないための措置が、改訂の品質も落としていた。
+#
+# 改訂は「できあがった本文を直す」工程なので、完成稿の物さしをそのまま当てる。
+# 落ちたら修復（repair_chapter.py が会話を足す処理を持つ）→ 通らなければ元に戻す。
+# どうしても警告に戻したいときは AUTONOVEL_REVISION_GATE_WARN_ITEMS="dialogue_ratio" 等。
+REVISION_GATE_WARN_ITEMS = os.environ.get("AUTONOVEL_REVISION_GATE_WARN_ITEMS", "")
 
 # 章ゲートに落ちたとき、まず**修復**を試すか（2026-10-03 Hisa決定）。
 # 修復 = repair_chapter.py。落ちた箇所だけを直す（重複・記号はコードで、比喩・最小窓はその箇所だけLLMで）。
@@ -949,8 +962,25 @@ ARC_REBUILD_PERSIST_ROUNDS = int(os.environ.get("AUTONOVEL_ARC_REBUILD_PERSIST_R
 
 
 def gate_cmd_for(path: str) -> str:
-    """章ゲート（文体6項目）を1ファイルにかけるコマンド。"""
+    """章ゲート（文体6項目）を1ファイルにかけるコマンド。
+
+    既定ではセリフ比・最小窓は警告のみ（＝破棄条件にしない）。初稿の生原稿を
+    落とさないための措置（実測 2026-10-03）。**改訂では使わない** —
+    改訂は完成稿の物さしを当てるので `revision_gate_cmd_for` を使う。
+    """
     return (f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
+            f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} {path}")
+
+
+def revision_gate_cmd_for(path: str) -> str:
+    """改訂フェーズの章ゲート。**セリフ比・最小窓も合否対象**（既定）。
+
+    実測（2026-10-08）: 改訂のゲートが会話比率を見ていなかったため、講評の
+    「説明を台詞でなく描写で」に従って書き直した結果、セリフ比50%未満の章が
+    6章・最小窓30%未満が11章に増えた（初稿はそれぞれ1章・0章）。
+    生原稿を落とさない設定が改訂の品質も落とす抜け穴になっていた。
+    """
+    return (f'AUTONOVEL_GATE_WARN_ITEMS="{REVISION_GATE_WARN_ITEMS}" '
             f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} {path}")
 
 
@@ -1040,7 +1070,7 @@ def revision_gate_check(changed: list) -> int:
         return 0
     reverted = 0
     for path in changed:
-        res = run_tool(gate_cmd_for(path), timeout=300)
+        res = run_tool(revision_gate_cmd_for(path), timeout=300)
         if res.returncode == 0:
             continue
         step(f"  章ゲートFAIL → 元に戻します: {path.name}")
@@ -1258,7 +1288,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             # 本文を触ったので章ゲートを回す（FAIL なら修復 → それでも駄目なら元に戻す）
             ch_file = CHAPTERS_DIR / f"ch_{ch_num:02d}.md"
             gate_path = f"chapters/ch_{ch_num:02d}.md"
-            if REVISION_GATES and run_tool(gate_cmd_for(gate_path), timeout=300).returncode != 0:
+            if REVISION_GATES and run_tool(revision_gate_cmd_for(gate_path), timeout=300).returncode != 0:
                 step("  改訂版が章ゲートに落ちました — 修復を試します（落ちた箇所だけ直す）")
                 healed = False
                 if REPAIR_ON_FAIL and ch_file.exists():
@@ -1267,7 +1297,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                            f'--band "{CHAPTER_GATE_BAND}"', timeout=REPAIR_TIMEOUT)
                     repaired = ch_file.with_name(f"ch_{ch_num:02d}_repaired.md")
                     if repaired.exists():
-                        if run_tool(gate_cmd_for(f"chapters/ch_{ch_num:02d}_repaired.md"),
+                        if run_tool(revision_gate_cmd_for(f"chapters/ch_{ch_num:02d}_repaired.md"),
                                     timeout=300).returncode == 0:
                             run_tool(f"mv chapters/ch_{ch_num:02d}_repaired.md "
                                      f"chapters/ch_{ch_num:02d}.md")

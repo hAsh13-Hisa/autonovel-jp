@@ -27,7 +27,8 @@
   uv run python rebuild_arc.py --plan-file <編集したJSON> --apply   # 設計を人手で直してから適用
 
 環境変数:
-  AUTONOVEL_ARC_REBUILD_GATE_WARN   章ゲートで警告のみにする項目（既定 dialogue_ratio,min_window）
+  AUTONOVEL_ARC_REBUILD_GATE_WARN   章ゲートで警告のみにする項目（既定は空＝全項目合否対象。
+                                    改訂と同じ物さし。生原稿を落とさない設定は使わない）
   AUTONOVEL_ARC_REBUILD_MIN_RATIO   書き直し後の字数の下限（元の材料に対する割合・既定0.9）
   AUTONOVEL_ARC_REBUILD_QUIET_MAX   静かな章の上限（既定3）
   AUTONOVEL_ARC_REBUILD_TIMEOUT     1章の書き直しの制限時間（既定1800秒）
@@ -54,7 +55,7 @@ STATE = BASE_DIR / "state.json"
 MIN_RATIO = float(os.environ.get("AUTONOVEL_ARC_REBUILD_MIN_RATIO", "0.9"))
 QUIET_MAX = int(os.environ.get("AUTONOVEL_ARC_REBUILD_QUIET_MAX", "3"))
 REWRITE_TIMEOUT = int(os.environ.get("AUTONOVEL_ARC_REBUILD_TIMEOUT", "1800"))
-GATE_WARN = os.environ.get("AUTONOVEL_ARC_REBUILD_GATE_WARN", "dialogue_ratio,min_window")
+GATE_WARN = os.environ.get("AUTONOVEL_ARC_REBUILD_GATE_WARN", "")
 
 # 講評の指摘のうち「骨格」のものを見分ける語。章や範囲の書き直しでは消えない種類。
 STRUCTURAL_KEYS = (

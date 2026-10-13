@@ -43,6 +43,11 @@ WINDOW_STEP = 100
 METAPHOR_DENSITY_MAX = 3.0
 METAPHOR_SAME_MAX = 4
 DUP_MIN_LEN = 12
+# 最小窓（最も会話の薄い500字区画の会話の文字割合）の下限。
+# verify_chapter_gates.py と同じ30%に揃える。旧55%は行ベースの数字で、
+# 2026-10-06 実測（3章: 最も薄い区画でも 29.8〜35.4%）で到達不能だった。
+# 修復が55%を追い続けると「直せない」を繰り返して元のまま戻るだけになる。
+MIN_WINDOW_MIN = 0.30
 
 
 def norm(s: str) -> str:
@@ -74,7 +79,7 @@ def measure(text: str, lo: int, hi: int) -> dict:
         "ratio": (dlg / chars * 100) if chars else 0.0,
         "ratio_ok": (dlg / chars * 100 if chars else 0) >= 50,
         "min_window": mw,
-        "min_window_ok": mw >= 55,
+        "min_window_ok": mw >= MIN_WINDOW_MIN * 100,
         "dup": len(dups),
         "dup_ok": len(dups) == 0,
         "dup_list": dups,
@@ -394,10 +399,10 @@ def insert_dialogue(text: str, log: list) -> str:
     before_min, after_min = min_window_ratio(text), min_window_ratio(cand)
     b_blocks, a_blocks = block_ratios(_body(text)), block_ratios(_body(cand))
     got = a_blocks[idx] if idx < len(a_blocks) else 0.0
-    # 合格は「悪化していない」こと: 全体の最小が下がらない・薄い区画（下限55%）が増えない・
+    # 合格は「悪化していない」こと: 全体の最小が下がらない・薄い区画（下限30%）が増えない・
     # 会話の量（区画の比率の和）が増える＝地の文を会話にした分が効いている。
-    thin_b = sum(1 for x in b_blocks if x < 0.55)
-    thin_a = sum(1 for x in a_blocks if x < 0.55)
+    thin_b = sum(1 for x in b_blocks if x < MIN_WINDOW_MIN)
+    thin_a = sum(1 for x in a_blocks if x < MIN_WINDOW_MIN)
     if after_min < before_min or thin_a > thin_b or sum(a_blocks) <= sum(b_blocks):
         log.append(f"会話に置き換えても改善しないので見送り"
                    f"（対象の区画 {r * 100:.0f}%→{got * 100:.0f}% / "
@@ -487,8 +492,8 @@ def main() -> int:
         print(f"比喩: 密度 {m0['metaphor_density']:.1f}（上限 {METAPHOR_DENSITY_MAX}）"
               f"・まるで+みたい {m0['metaphor_same']}（上限 {METAPHOR_SAME_MAX}）→ 超過分を言い換え")
         r, idx, _ = weakest_block(text)
-        print(f"最小窓: {m0['min_window']:.0f}%（下限55%）/ 最も薄い区画は索引{idx}で {r * 100:.0f}%"
-              f" → そこの地の文を会話に置き換え")
+        print(f"最小窓: {m0['min_window']:.0f}%（下限{MIN_WINDOW_MIN * 100:.0f}%）/ "
+              f"最も薄い区画は索引{idx}で {r * 100:.0f}% → そこの地の文を会話に置き換え")
         return 0
 
     cur = text
