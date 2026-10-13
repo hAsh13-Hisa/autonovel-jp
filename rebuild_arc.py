@@ -173,17 +173,25 @@ def act_overview() -> str:
 
 
 def outline_chapter_entries() -> dict:
-    """章立てから `## 第N章：...` の見出しと本文を取り出す。"""
+    """章立てから `## 第N章：...` の見出しと本文を取り出す。
+
+    見出しの階層は作品によって違う（`### 第1章：` も `## 第1章：` もある）ので、
+    `#` の数に関わらず「第N章」の見出しとして受ける。実物の章立ては `###` だった
+    （`##` しか見ていないと全章を見落として設計の精度が落ちる）。
+    """
     if not OUTLINE.exists():
         return {}
     text = read(OUTLINE)
     entries = {}
-    for m in re.finditer(r"^##\s*第\s*(\d+)\s*章\s*[:：]?\s*(.*)$", text, re.M):
+    for m in re.finditer(r"^#{2,4}\s*第\s*(\d+)\s*章\s*[:：]?\s*(.*)$", text, re.M):
         num = int(m.group(1))
         start = m.end()
-        nxt = re.search(r"^##\s*(?:第\s*\d+\s*章|幕構成|伏線台帳|前半|後半)", text[start:], re.M)
+        # 次に来る見出し（第N章・幕構成・伏線台帳・部の見出し）のどこかで切る
+        nxt = re.search(r"^#{1,4}\s*(?:第\s*\d+\s*章|幕構成|伏線台帳|章ごとのアウトライン|前半|後半)",
+                        text[start:], re.M)
         body = text[start:start + nxt.start()] if nxt else text[start:]
-        entries[num] = {"title": m.group(2).strip(), "body": body.strip()}
+        if num not in entries:                       # 前半／後半で二重に出る場合は最初を採る
+            entries[num] = {"title": m.group(2).strip(), "body": body.strip()}
     return entries
 
 
