@@ -48,10 +48,11 @@ BASE_DIR = Path(__file__).resolve().parent
 # 既定で回す機械項目。unused_setting は「全体を見る材料」なので既定では回さない
 # （--only unused_setting で使う。実測: 完成稿では40件出るが、書式ラベルや作例の引用が混ざる）
 MECH_ITEMS = ("late_vanish", "death_then_alive", "exposition_dialogue",
-              "pronoun_shift", "term_shift", "speaker_gap")
+              "pronoun_shift", "term_shift", "speaker_gap",
+              "voice_pronoun_conflict")
 ALL_MECH_ITEMS = ("late_vanish", "unused_setting", "death_then_alive",
                   "exposition_dialogue", "pronoun_shift", "term_shift",
-                  "speaker_gap")
+                  "speaker_gap", "voice_pronoun_conflict")
 
 HONORIFICS = ("様", "さん", "殿", "ちゃん", "先生", "君", "どの", "ども")
 
@@ -515,6 +516,120 @@ def check_speaker_gap(chapters: list, characters: Path) -> list:
     return out
 
 
+def check_voice_pronoun_conflict(chapters: list, characters: Path) -> list:
+    """台詞の**口調と一人称が食い違って**いないか（設定と照合）。
+
+    なぜ必要か（実測 2026-10-13・『鉄の肺と錆びた聖歌』第13章）:
+    一人称を「俺」に統一する作業で見つけた。本文にこうあった:
+
+      ルナが振り返った。銀色の瞳に強い決意が宿っている。
+      「試してみる価値はあるわね。…鍵が、僕たちの欠陥にあるのだとしたら」
+
+    「〜わね」はルナの口調（設定: 一人称「私」）なのに「僕たち」になっている。
+    LLM が**口調と一人称を別々に生成した**ため、帰属は合っていても中身が矛盾する。
+    これは口調のブレとして読者に明確に判るので、機械で拾う。
+
+    判定: 台詞の中に「一人称X＋語尾」の組み合わせで、設定の人物と食い違うものを拾う。
+    語尾は話者の帰属が取れないので、**設定の口調の語尾（例: ルナ「わね」「でしょう」）と
+    一人称（僕たち）が同じ台詞に同居**しているときだけ警告する（安全側）。
+    """
+    try:
+        text = read(characters)
+    except Exception:
+        return []
+    # 設定の人物ごとの一人称と口調の語尾を抜く
+    # 形式: 「0. **一人称...**: **「俺」**」と「口癖: 「調律しましょう」」
+    blocks = re.split(r"^##\s+", text, flags=re.M)
+    persons = {}
+    for b in blocks[1:]:
+        head = b.splitlines()[0] if b.splitlines() else ""
+        # 見出しは「1. シオン (Shion)」「5. 追加キャラクター：リナ (Lina)」の形。
+        # ローマ字を落とし、番号・肩書き・ローマ字を除いた**日本語の名前**を取る。
+        raw = re.sub(r"[（(][^)）]*[)）]", "", head).strip()   # ローマ字を落とす
+        raw = re.sub(r"^\d+[.．、]?\s*", "", raw)             # 先頭の番号
+        raw = re.split(r"[：:]", raw)[-1].strip()             # 「追加キャラクター：リナ」
+        nm = re.search(r"[ァ-ヶー]{2,6}$", raw) or re.search(r"[ぁ-ん一-龥]{2,6}$", raw)
+        name = nm.group(0) if nm else None
+        if not name:
+            continue
+        pm = re.search(r"一人称[^:：]*[:：][^「]*「([^」]+)」", b)
+        pron = pm.group(1) if pm else None
+        # 口調の語尾＝口癖の**語尾部分**。口癖行は「調律しましょう」「不協和ですね」なので、
+        # 括弧を除いた本体の**末尾2〜4文字**を語尾として取る。
+        # （「わね」「でしょう」という語尾ワードの照合では、口癖が固有名詞だと拾えなかった。
+        #   実測 2026-10-13: ルナの口癖から語尾が取れず、第13章の「僕たち」を見逃した）
+        tail_words = []
+        for t in re.findall(r"口癖[^:：]*[:：](.+)", b):
+            for q in re.findall(r"「([^」]+)」", t):
+                core = re.sub(r"[（(][^)）]*[)）]", "", q).strip()
+                if len(core) >= 3:
+                    tail_words.append(core[-3:])       # 口癖の語尾そのもの
+        # 口癖に加えて、その人物の話し方を示す**語尾ワード**も見る。
+        # 口癖は「調律しましょう」なので「わね」は出てこない。第13章の実測では
+        # ルナの台詞が「試してみる価値はあるわね。…僕たちの欠陥が…」だったので、
+        # 「わね」を語尾として持たせないと見逃す。
+        voice_tail = re.search(r"文の長さ|丁寧|婉曲|流麗", b)
+        if voice_tail and ("丁寧" in b or "婉曲" in b or "流麗" in b):
+            tail_words += ["わね", "でしょう", "かしら", "ますわ"]
+        if pron or tail_words:
+            persons[name] = {"pron": pron, "tails": tail_words}
+    if not persons:
+        return []
+
+    conflicts = []
+    for num, _name, ch_text in chapters:
+        lines = ch_text.split("\n")
+        cur = None
+        for l in lines:
+            if "「" not in l:
+                # 地の文。直前の名前で話者を持つが、**口調が別人のものなら口調を優先**する
+                # （実測: 「シオンは不信感を露わにし」の直後の「あら、私の調和が…」は
+                #  ルナの台詞。地の文にシオンが出ただけでシオンにすると誤検出13件になった）
+                found = None
+                for n in persons:
+                    if n in l:
+                        found = n
+                        break
+                if found:
+                    cur = found
+                continue
+            # 口調から話者を推定（一人称＋語尾の両方が設定と食い違う人物を探す）
+            speaker = _guess_speaker_by_voice(l, persons) or cur
+            if speaker not in persons:
+                continue
+            p = persons[speaker]
+            if p["tails"] and p["pron"]:
+                wrong = [x for x in ("僕", "俺", "私") if x in l and x != p["pron"]]
+                hit_tail = [t for t in p["tails"] if t in l]
+                if wrong and hit_tail:
+                    conflicts.append({
+                        "chapter": num,
+                        "name": speaker,
+                        "dialogue": l.strip()[:70],
+                        "detail": f"{speaker}の台詞に口調（{'・'.join(hit_tail)}）と"
+                                  f"設定と違う一人称（{'・'.join(wrong)}）が同居しています。"
+                                  f"設定の一人称は「{p['pron']}」です",
+                    })
+    return conflicts
+
+
+def _guess_speaker_by_voice(line: str, persons: dict) -> "str | None":
+    """台詞の口調（語尾）から話者を推定する。
+
+    複数の人物が同じ語尾を使う場合は None（推定できない）。
+    「わね」「ましょう」はルナ、「だぜ」はリナ、「クソったれ」はガラム、
+    「……」（沈黙）はシオン、といった具合に一意に決まるものだけ返す。
+    """
+    hit = [n for n, p in persons.items() if p["tails"] and any(t in line for t in p["tails"])]
+    # 一人称も材料に入れる（「私」ならルナかゼノス）
+    hit2 = [n for n in hit if persons[n]["pron"] in line] if hit else []
+    if len(hit2) == 1:
+        return hit2[0]
+    if len(hit) == 1:
+        return hit[0]
+    return None
+
+
 def outline_block(outline_text: str, ch: int) -> str:
     """章立てから、その章の記述（植え込み・回収を含む）だけを切り出す。"""
     marks = [(m.start(), int(m.group(1)))
@@ -774,6 +889,9 @@ def main() -> int:
         mech["term_shift"] = check_term_shift(chapters, repo / "characters.md")
     if "speaker_gap" in only:
         mech["speaker_gap"] = check_speaker_gap(chapters, repo / "characters.md")
+    if "voice_pronoun_conflict" in only:
+        mech["voice_pronoun_conflict"] = check_voice_pronoun_conflict(
+            chapters, repo / "characters.md")
 
     judged = {}
     if args.llm:
