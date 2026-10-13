@@ -410,6 +410,26 @@ def save_plan(plan: dict, path: Path) -> None:
 # 適用（--apply のときだけ本文に触る）
 # ---------------------------------------------------------------------------
 
+def _pyexe() -> str:
+    """このリポジトリの .venv のインタプリタ（無ければ python3）。
+
+    なぜ `uv run` をやめたか（実測 2026-10-13）: `uv run` は
+    `UV_PROJECT_ENVIRONMENT` を無視して uv が独自管理する python3.12 を使い、
+    その環境には dotenv も httpx も入っていない。
+    → gen_revision.py や verify_consistency.py が
+      ModuleNotFoundError で落ち、骨格の作り直し／改訂ループが止まった。
+    本番の venv の場所は env で渡せる（コピー実行にも対応）。
+    """
+    env = os.environ.get("AUTONOVEL_PYTHON")
+    if env and Path(env).exists():
+        return env
+    for base in (Path(__file__).parent, Path.cwd()):
+        cand = base / ".venv" / "bin" / "python"
+        if cand.exists():
+            return str(cand)
+    return "python3"
+
+
 def run(cmd: str, timeout: int = 600) -> subprocess.CompletedProcess:
     print(f"  RUN: {cmd}", flush=True)
     return subprocess.run(cmd, shell=True, cwd=BASE_DIR, capture_output=True,
@@ -498,7 +518,7 @@ def build_brief(entry: dict, plan: dict, material_chars: int) -> str:
 
 def gate_cmd(path: str) -> str:
     return (f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN}" '
-            f"uv run python verify_chapter_gates.py --band 3000 99999 {path}")
+            f'"{_pyexe()}" verify_chapter_gates.py --band 3000 99999 {path}')
 
 
 def apply_plan(plan: dict) -> int:
@@ -548,11 +568,11 @@ def apply_plan(plan: dict) -> int:
         brief.parent.mkdir(parents=True, exist_ok=True)
         brief.write_text(build_brief(e, plan, before), encoding="utf-8")
         print(f"\n--- 新第{num}章「{e.get('タイトル', '')}」（材料 {before:,}字）")
-        run(f"uv run python gen_revision.py {num} {brief}", timeout=REWRITE_TIMEOUT)
+        run(f'"{_pyexe()}" gen_revision.py {num} {brief}', timeout=REWRITE_TIMEOUT)
         gate = run(gate_cmd(f"chapters/ch_{num:02d}.md"), timeout=300)
         if gate.returncode != 0:
             print("  章ゲートFAIL → 修復を試します")
-            run(f"uv run python repair_chapter.py chapters/ch_{num:02d}.md "
+            run(f'"{_pyexe()}" repair_chapter.py chapters/ch_{num:02d}.md '
                 f"--out chapters/ch_{num:02d}_repaired.md --band 3000 99999",
                 timeout=REWRITE_TIMEOUT)
             rep = CHAPTERS_DIR / f"ch_{num:02d}_repaired.md"
@@ -581,7 +601,7 @@ def apply_plan(plan: dict) -> int:
     print("\n=== 整合ゲート（骨格を作り直したので必ず回す）===")
     report = EDIT_LOGS_DIR / "consistency_report_rebuild.md"
     EDIT_LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    cons = run(f"uv run python verify_consistency.py --report {report}", timeout=600)
+    cons = run(f'"{_pyexe()}" verify_consistency.py --report {report}', timeout=600)
     print((cons.stdout or "")[-1500:])
 
     # 5) state の章数を新しい骨格に合わせる

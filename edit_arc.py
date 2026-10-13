@@ -181,6 +181,26 @@ def build_brief(ch: int, plan: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _pyexe() -> str:
+    """このリポジトリの .venv のインタプリタ（無ければ python3）。
+
+    なぜ `uv run` をやめたか（実測 2026-10-13）: `uv run` は
+    `UV_PROJECT_ENVIRONMENT` を無視して uv が独自管理する python3.12 を使い、
+    その環境には dotenv も httpx も入っていない。
+    → gen_revision.py や verify_consistency.py が
+      ModuleNotFoundError で落ち、改訂ループが止まった（低得点ではない）。
+    本番の venv の場所は env で渡せる（コピー実行にも対応）。
+    """
+    env = os.environ.get("AUTONOVEL_PYTHON")
+    if env and Path(env).exists():
+        return env
+    for base in (Path(__file__).parent, Path.cwd()):
+        cand = base / ".venv" / "bin" / "python"
+        if cand.exists():
+            return str(cand)
+    return "python3"
+
+
 def run(cmd: str, timeout: int = 600) -> subprocess.CompletedProcess:
     print(f"  RUN: {cmd}", flush=True)
     return subprocess.run(cmd, shell=True, cwd=BASE_DIR, capture_output=True,
@@ -231,10 +251,10 @@ def main() -> int:
         old = before[ch]
         brief = BRIEFS_DIR / f"arc_edit_ch{ch:02d}.md"
         print(f"--- 第{ch}章（{old:,}字）")
-        run(f"uv run python gen_revision.py {ch} {brief}")
+        run(f'"{_pyexe()}" gen_revision.py {ch} {brief}')
         new = jp_chars(chapter_text(ch))
         ratio = new / old if old else 1.0
-        gate = run(f"uv run python verify_chapter_gates.py --band 3000 99999 "
+        gate = run(f'"{_pyexe()}" verify_chapter_gates.py --band 3000 99999 '
                    f"chapters/ch_{ch:02d}.md")
         gate_ok = gate.returncode == 0
         if not gate_ok or ratio < MIN_RATIO:
