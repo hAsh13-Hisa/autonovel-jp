@@ -205,9 +205,23 @@ def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.Co
 
 
 def pyexe() -> str:
-    """このリポジトリの .venv のインタプリタ。無ければシステムの python3。"""
-    cand = Path(__file__).parent / ".venv" / "bin" / "python"
-    return str(cand) if cand.exists() else "python3"
+    """このリポジトリの .venv のインタプリタ。無ければシステムの python3。
+
+    探す場所は**このファイルの隣**だけでなく、環境変数 `AUTONOVEL_PYTHON` と
+    カレントディレクトリの `.venv` も見る。なぜか（実測 2026-10-13）:
+    スクリプト一式を作業用ディレクトリへコピーして実行すると
+    `Path(__file__).parent / ".venv"` は存在せず、システムの python3 に
+    フォールバックして `ModuleNotFoundError: No module named 'dotenv'` で
+    落ちた。本番の venv の場所を env で渡せるようにする。
+    """
+    env = os.environ.get("AUTONOVEL_PYTHON")
+    if env and Path(env).exists():
+        return env
+    for base in (Path(__file__).parent, Path.cwd()):
+        cand = base / ".venv" / "bin" / "python"
+        if cand.exists():
+            return str(cand)
+    return "python3"
 
 
 def uv_run(script: str, timeout: int = 600) -> subprocess.CompletedProcess:
