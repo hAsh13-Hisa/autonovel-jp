@@ -972,6 +972,45 @@ def gate_cmd_for(path: str) -> str:
             f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} {path}")
 
 
+def append_exposition_note(extra: str, ch_num: int) -> str:
+    """説明台詞の多い章のとき、**実際の台詞と現在値**を改訂ブリーフに足す。
+
+    なぜ必要か（実測 2026-10-08）: 説明台詞を検出した3章（第5・6・9章）を書き直しても
+    比率が 0.55→0.55 と動かなかった。原因はブリーフに実際の台詞が無く、
+    「設定説明を地の文へ移す」という抽象的な指示だけだったため。
+    → どの台詞が説明かを出し、現在値も書いて「直したか」が測れるようにする。
+
+    検出は機械だけ（辞書ベース）なので、judge モデルの成否に関わらず動く。
+    この章に何も無ければ extra をそのまま返す。
+    """
+    try:
+        sys.path.insert(0, str(BASE_DIR))
+        import verify_consistency as vc  # noqa: E402
+        path = CHAPTERS_DIR / f"ch_{ch_num:02d}.md"
+        if not path.exists():
+            return extra
+        hits = vc.check_exposition_dialogue([(ch_num, path, path.read_text(encoding="utf-8"))])
+        if not hits:
+            return extra
+        it = hits[0]
+        lines = [extra.strip()] if (extra or "").strip() else []
+        lines += ["", "## 説明台詞（設定の説明を台詞から降ろす）",
+                  f"この章の長い台詞 {it['long_lines']}本のうち {it['expository']}本が"
+                  f"設定の説明です（比率 {it['ratio']}）。",
+                  "",
+                  "次の台詞が設定の説明になっています。1本ずつ、**視覚や体の感覚の描写に"
+                  "置き換える**か、短いやり取りに分割してください。登場人物に世界の"
+                  "仕組みを語らせないこと（読者は本文から読み取れる）。",
+                  ""]
+        for q in (it.get("quotes") or []):
+            lines.append(f"- 「{q}」")
+        lines += ["", f"直したあとの目標: 長い台詞のうち設定説明の割合を {it['ratio']} → "
+                      "0.5 未満に落とす。"]
+        return "\n".join(lines) + "\n"
+    except Exception:
+        return extra
+
+
 def revision_gate_cmd_for(path: str) -> str:
     """改訂フェーズの章ゲート。**セリフ比・最小窓も合否対象**（既定）。
 
@@ -1278,6 +1317,12 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                     extra = cons_brief.read_text(encoding="utf-8").strip()
                 except OSError:
                     extra = ""
+                # 説明台詞は「整合の指摘」が出なくても機械だけで測れるので、
+                # --llm の成否に関わらずこの章の分だけ必ず足す。
+                # 実測（2026-10-08）: 説明台詞を検出した3章（第5・6・9章）を書き直しても
+                # 比率が 0.55→0.55 と動かなかった。原因はブリーフに実際の台詞が無く、
+                # 「同じ調子で書き直される」だけだったため。→ 台詞を出し、現在値も書く。
+                extra = append_exposition_note(extra, ch_num)
                 if extra:
                     with open(brief_file, "a", encoding="utf-8") as fh:
                         fh.write("\n\n" + extra + "\n")

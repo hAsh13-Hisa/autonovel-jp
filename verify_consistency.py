@@ -312,7 +312,8 @@ EXPL_PHRASES = ("という", "つまり", "だから", "わけ", "のよ", "な�
 
 
 def check_exposition_dialogue(chapters: list, min_chars: int = 60, min_lines: int = 4,
-                              warn_ratio: float = 0.5) -> list:
+                              warn_ratio: float = 0.5, max_quotes: int = 4,
+                              quote_chars: int = 90) -> list:
     """設定や仕組みを説明する長い台詞の比率が高い章を挙げる。
 
     講評の重大な指摘「世界観の説明を台詞ではなく、視覚描写に分散させよ」に対応する見張り。
@@ -320,6 +321,10 @@ def check_exposition_dialogue(chapters: list, min_chars: int = 60, min_lines: in
     説明の言い回しを含む割合は 第5章0.71・第6章0.55・第9章0.80 と突出し、
     第2章0.43・第23章0.25 が続いた（＝序盤の世界観説明の章が濃い）。
     しきい値はその実測に合わせて 0.5（4本以上ある章だけを対象）。
+
+    `quotes` は改訂ブリーフに載せる**実際の台詞**。指摘に台詞が無いと
+    「同じ調子で書き直される」だけで比率が動かない（実測 2026-10-08:
+    検出した3章を書き直しても 0.55→0.55 と変化しなかった）。
     """
     out = []
     for num, _f, text in chapters:
@@ -330,9 +335,14 @@ def check_exposition_dialogue(chapters: list, min_chars: int = 60, min_lines: in
         exp = [ln for ln in long_lines if any(k in ln for k in EXPL_PHRASES)]
         ratio = len(exp) / len(long_lines)
         if ratio >= warn_ratio:
+            # ブリーフに載せる台詞は**重複を除いて順序を保つ**。同じ台詞が章の中に
+            # 何度も出ることがあり（同じ説明を別の場面で繰り返す）、そのまま出すと
+            # ブリーフが同じ行で埋まって読めない。
+            uniq = list(dict.fromkeys(exp))
             out.append({"chapter": num, "ratio": round(ratio, 2),
                         "expository": len(exp), "long_lines": len(long_lines),
-                        "samples": [ln[:34] for ln in exp[:2]]})
+                        "samples": [ln[:34] for ln in uniq[:2]],
+                        "quotes": [ln[:quote_chars] for ln in uniq[:max_quotes]]})
     return out
 
 
@@ -487,9 +497,16 @@ def build_brief(repo: Path, mech: dict, judged: dict) -> str:
     if expo:
         out.append("## 説明台詞の多い章（設定説明を台詞から降ろす）")
         for it in expo:
-            out.append(f"- 第{it['chapter']}章: 長い台詞 {it['long_lines']}本のうち {it['expository']}本が設定説明。"
-                       "設定は人物に語らせず、**シオンの視覚描写（波形・色・ひずみの変化）と、"
-                       "体に伝わる振動の描写**に移す。説明の台詞は短く切るか、動作で置き換える。")
+            out.append(f"- 第{it['chapter']}章: 長い台詞 {it['long_lines']}本のうち "
+                       f"{it['expository']}本が設定説明（{it['ratio']}）。")
+            # 実際の台詞を出す。**これが無いと「同じ調子で書き直される」だけで比率が動かない**
+            # （実測 2026-10-08: 検出した3章を書き直しても説明台詞の比率が 0.55→0.55 と
+            #  変化しなかった。指摘に台詞が無く、直す対象が特定できていなかったため）。
+            out.append("  次の台詞が設定の説明になっています。1本ずつ、**視覚や体の感覚の"
+                       "描写に置き換える**か、短いやり取りに分割してください。"
+                       "登場人物に世界の仕組みを語らせないこと。")
+            for q in (it.get("quotes") or []):
+                out.append(f"  - 「{q}」")
         out.append("")
     return "\n".join(out)
 
