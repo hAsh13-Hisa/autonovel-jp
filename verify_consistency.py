@@ -47,10 +47,16 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # 既定で回す機械項目。unused_setting は「全体を見る材料」なので既定では回さない
 # （--only unused_setting で使う。実測: 完成稿では40件出るが、書式ラベルや作例の引用が混ざる）
-MECH_ITEMS = ("late_vanish", "death_then_alive", "exposition_dialogue")
-ALL_MECH_ITEMS = ("late_vanish", "unused_setting", "death_then_alive", "exposition_dialogue")
+MECH_ITEMS = ("late_vanish", "death_then_alive", "exposition_dialogue",
+              "pronoun_shift", "term_shift", "speaker_gap")
+ALL_MECH_ITEMS = ("late_vanish", "unused_setting", "death_then_alive",
+                  "exposition_dialogue", "pronoun_shift", "term_shift",
+                  "speaker_gap")
 
 HONORIFICS = ("様", "さん", "殿", "ちゃん", "先生", "君", "どの", "ども")
+
+# 章の冒頭は前の文脈が無いので「話者が不明」は当然（誤検出を避けるため判定対象外）
+HEAD_SKIP = 20
 
 # 設定文書の「節の見出し」（地理・タイムライン等の書式ラベル）は設定語ではないので外す
 TEMPLATE_STOP = {
@@ -354,6 +360,161 @@ JUDGE_SYSTEM = (
 )
 
 
+def check_pronoun_shift(chapters: list, span: int = 2, min_count: int = 3) -> list:
+    """主人公の一人称が章をまたいで不自然に入れ替わっていないか（口調のブレ）。
+
+    なぜ必要か（実測 2026-10-13・『鉄の肺と錆びた聖歌』17章版）:
+    講評が ★★★☆☆ の理由の一つに「主人公シオンの呼称が『俺』から『僕』へ
+    不自然に変化している」を挙げていた。実測してみると**指摘は正しく**、
+      第1〜3章 俺のみ → 第4〜6章 僕のみ → 第7〜9章 俺のみ → 第10〜12章 混在
+    と**4回も切り替わって**いた。LLM は章ごとに独立に書くので、章をまたいで
+    一人称をそろえる仕組みが無い。characters.md の例文も一人称を書いていない
+    （「……青い。君の歌は…」）ため、どちらを使うかの指定が存在しなかった。
+
+    判定: 直近 span 章ぶんの一人称の構成が前後で違ったら警告する。
+    「混在」のまま続くのは一貫しているので警告しない（意図的な揺らぎと区別できないため）。
+    """
+    out = []
+    prev = None
+    for num, _name, text in chapters:
+        dlg = re.findall(r"「([^」]*)」", text)
+        ore = sum(d.count("俺") for d in dlg)
+        boku = sum(d.count("僕") for d in dlg)
+        watashi = sum(d.count("私") + d.count("わたし") for d in dlg)
+        if ore + boku + watashi < min_count:
+            prev = None
+            continue
+        # 台詞の一人称が1種類だけなら「俺」「僕」「私」、複数なら「混在」
+        used = [n for n, c in (("俺", ore), ("僕", boku), ("私", watashi)) if c]
+        cur = used[0] if len(used) == 1 else "混在"
+        if prev is not None and prev != cur:
+            out.append({
+                "chapter": num,
+                "from": prev,
+                "to": cur,
+                "detail": f"一人称が「{prev}」から「{cur}」に切り替わった（この章: 俺={ore} 僕={boku} 私={watashi}）",
+            })
+        prev = cur
+    return out
+
+
+def check_term_shift(chapters: list, characters: Path, span: int = 2) -> list:
+    """定義キャラを、名前ではなく「女」「男」などの種類語で呼んでいないか。
+
+    なぜ必要か（実測 2026-10-13・同作）: 講評の指摘に「ルナの呼称が『女』から
+    『君』へ変化している」があった。実測では全17章に「女」が残っていた
+    （第1章だけで9回）。設定には名前があるので、本文も名前で呼ぶのが原則。
+    地の文での「女」は描写として成り立つ場合もあるので、**警告**にとどめる。
+    """
+    try:
+        defined = extract_defined_names(characters)
+    except Exception:
+        return []
+    if not defined:
+        return []
+    generic = ("女", "男", "少女", "少年", "老人", "相手", "相手方")
+    out = []
+    for num, _name, text in chapters:
+        # その章に定義キャラの名前が出ているときだけ見る（出ていなければ対象外）
+        present = [n for n in defined if n in text]
+        if not present:
+            continue
+        hits = {g: len(re.findall(rf"{g}[、。はがもに]?", text)) for g in generic}
+        hits = {g: c for g, c in hits.items() if c >= 2}
+        if hits:
+            out.append({
+                "chapter": num,
+                "names": present,
+                "generic": hits,
+                "detail": f"名前のある人物（{'・'.join(present)}）を種類語で呼んでいる: "
+                          + " ".join(f"{g}={c}" for g, c in sorted(hits.items(), key=lambda x: -x[1])),
+            })
+    return out
+
+
+def _voice_identifies(line: str, characters: Path) -> bool:
+    """口調だけで話者が一意に決まる台詞か（＝話者の地の文が無くても許容してよいか）。
+
+    characters.md の「口癖」を読み、その台詞に**ちょうど1人分の口癖だけ**が
+    含まれていれば、話者は口調で自明とみなす。
+    実測: シオンの口癖「……」が入った短文は他に候補が無いので許容してよい。
+    逆に「私」はルナとゼノスの両方に当たるので、ここでは判定に使わない。
+    """
+    try:
+        text = read(characters)
+    except Exception:
+        return False
+    # 「口癖」行から「」で囲まれた口癖を集める（例: 口癖: 「……（沈黙）」「（視える）」）
+    habits = {}
+    for m in re.finditer(r"口癖[^:：]*[:：]\s*(.+)", text):
+        for q in re.findall(r"「([^」]+)」", m.group(1)):
+            core = re.sub(r"[（(][^)）]*[)）]", "", q).strip()   # 「……（沈黙）」→「……」
+            if core:
+                habits[core] = True
+    if not habits:
+        return False
+    hit = [q for q in habits if q and q in line]
+    return len(hit) == 1
+
+
+def check_speaker_gap(chapters: list, characters: Path) -> list:
+    """台詞の直前に**話者を示す地の文が無い**箇所（話者の帰属が壊れている）。
+
+    なぜ必要か（実測 2026-10-13・『鉄の肺と錆びた聖歌』第6章）:
+    講評が「キャラクターの口調や役割が途中で揺らいでいる」と指摘していた。
+    実測してみると原因は口調ではなく**話者の帰属そのものが抜けていた**:
+
+      ゼノス「さて、まずはあなたのその空っぽな肺の構造を…」
+      シオン「いきなり解剖するつもりかよ…」
+      ？？？「解剖などという野蛮なことはしませんよ…」   ← ルナの口調（私・〜ですよ）
+      ゼノスの言葉に合わせて、天井から…                ← 直後に「ゼノスの言葉」と帰属
+
+    「〜しませんよ」はルナの口調なのに、次の地の文は「ゼノスの言葉」。
+    間に「ルナが言った」の一行が無いので、**読者にも講評モデルにも誰の台詞か不明**。
+    結果として「口調が揺らいでいる」という評になる。
+
+    判定: 台詞があり、その直前に（a）誰かの名前（b）話者を示す語（言った・呟いた・叫んだ 等）
+    のどちらも無い行を拾う。前の行が台詞だけの場合、話者が切り替わった可能性が高い。
+    """
+    try:
+        defined = extract_defined_names(characters)
+    except Exception:
+        return []
+    speaker_cues = ("言っ", "呟", "叫", "囁", "答", "尋ね", "問", "声", "続け", "付け加",
+                    "付け足", "遮", "反論", "確認", "宣言", "唱")
+    out = []
+    for num, _name, text in chapters:
+        lines = [l for l in text.split("\n")]
+        for i, l in enumerate(lines):
+            if i < HEAD_SKIP:
+                continue          # 章の冒頭は前の文脈が無いので話者が不明で当然（判定対象外）
+            if "「" not in l:
+                continue
+            prev = next((lines[j] for j in range(i - 1, -1, -1) if lines[j].strip()), "")
+            if not prev:
+                continue
+            if "「" in prev:
+                continue          # 直前も台詞＝同じ話者の連続発話として許容
+            if any(n in prev for n in defined):
+                continue          # 名前で話者が示されている
+            if any(c in prev for c in speaker_cues):
+                continue          # 「〜と答えた」などで話者が示されている
+            # 口調で話者が一意に決まる台詞は許容する（独立行の台詞は小説の書式として普通）。
+            # 実測: 「……静かすぎるな」はシオンの沈黙＋短文なので他に候補が無い。
+            if _voice_identifies(l, characters):
+                continue
+            out.append({
+                "chapter": num,
+                "line_no": i + 1,
+                "prev": prev.strip()[:60],
+                "dialogue": l.strip()[:60],
+                "detail": f"{i + 1}行目の台詞の直前に話者を示す地の文がありません"
+                          f"（直前の行: 「{prev.strip()[:50]}」）。"
+                          f"誰の台詞か判別できないので、話者の一行（例:「ルナが言った。」）を足してください",
+            })
+    return out
+
+
 def outline_block(outline_text: str, ch: int) -> str:
     """章立てから、その章の記述（植え込み・回収を含む）だけを切り出す。"""
     marks = [(m.start(), int(m.group(1)))
@@ -453,6 +614,26 @@ def build_report(repo: Path, mech: dict, judged: dict) -> str:
             lines.append(f"  - 第{it['chapter']}章: 長い台詞 {it['long_lines']}本のうち "
                          f"{it['expository']}本が説明（{it['ratio']}）"
                          "＝設定を台詞で説明している。地の文・視覚描写へ移す候補")
+    ps = mech.get("pronoun_shift")
+    if ps is not None:
+        lines.append(f"- 一人称の切り替わり（口調のブレ）: {len(ps)}件")
+        for it in ps:
+            lines.append(f"  - 第{it['chapter']}章: {it['detail']}"
+                         "＝ characters.md の一人称にそろえる")
+    ts = mech.get("term_shift")
+    if ts is not None:
+        lines.append(f"- 名前のある人物を種類語で呼んでいる章: {len(ts)}件")
+        for it in ts:
+            lines.append(f"  - 第{it['chapter']}章: {it['detail']}"
+                         "＝ 設定の名前で呼ぶ（地の文の描写として成り立つ場合は許容）")
+    sg = mech.get("speaker_gap")
+    if sg is not None:
+        lines.append(f"- 話者の示されていない台詞: {len(sg)}件")
+        for it in sg[:12]:
+            lines.append(f"  - 第{it['chapter']}章 {it['line_no']}行: "
+                         f"台詞「{it['dialogue'][:40]}」の前に話者の地の文が無い")
+        if len(sg) > 12:
+            lines.append(f"  - …ほか {len(sg) - 12}件")
     if judged:
         lines.append("")
         lines.append("## 審査項目（judge モデル・1章1回）")
@@ -508,6 +689,36 @@ def build_brief(repo: Path, mech: dict, judged: dict) -> str:
             for q in (it.get("quotes") or []):
                 out.append(f"  - 「{q}」")
         out.append("")
+    ps = mech.get("pronoun_shift") or []
+    if ps:
+        out.append("## 一人称の切り替わり（口調のブレ）")
+        out.append("主人公の一人称が章をまたいで変わっています。**characters.md に書いてある"
+                   "一人称にそろえてください。** 成長や心境の変化で変える場合は、その章の"
+                   "中で読者に分かる形（場面の転換・時間経過）を示してから変えること。"
+                   "唐突な切り替えはキャラクターの同一性が損なわれます。")
+        for it in ps:
+            out.append(f"- 第{it['chapter']}章: {it['detail']}")
+        out.append("")
+    ts = mech.get("term_shift") or []
+    if ts:
+        out.append("## 名前のある人物を種類語で呼んでいる章")
+        out.append("設定に名前のある人物を「女」「男」などの種類語で呼んでいます。"
+                   "**設定の名前で呼んでください。** ただし、視点人物が相手を識別できない"
+                   "状況（暗がり・初対面・記憶の断片）での「女」は描写として成り立つので許容します。")
+        for it in ts:
+            out.append(f"- 第{it['chapter']}章: {it['detail']}")
+        out.append("")
+    sg = mech.get("speaker_gap") or []
+    if sg:
+        out.append("## 話者の示されていない台詞（口調のブレの原因）")
+        out.append("**この章の台詞に、誰が喋っているか判別できない箇所があります。**")
+        out.append("直前の行が地の文なのに、話者の名前も「〜と答えた」も無い状態です。")
+        out.append("読者にも審査にも誰の台詞か不明なので、「キャラクターの口調が揺らいでいる」")
+        out.append("という評になります。**話者を一行で示してください**（例:「ルナが言った。」）。")
+        out.append("同じ人物が続けて喋る場合は、直前の行が台詞なので問題ありません。")
+        for it in sg:
+            out.append(f"- 第{it['chapter']}章 {it['line_no']}行: {it['detail']}")
+        out.append("")
     return "\n".join(out)
 
 
@@ -557,6 +768,12 @@ def main() -> int:
             extract_defined_names(repo / "characters.md"), chapters)
     if "exposition_dialogue" in only:
         mech["exposition_dialogue"] = check_exposition_dialogue(chapters)
+    if "pronoun_shift" in only:
+        mech["pronoun_shift"] = check_pronoun_shift(chapters)
+    if "term_shift" in only:
+        mech["term_shift"] = check_term_shift(chapters, repo / "characters.md")
+    if "speaker_gap" in only:
+        mech["speaker_gap"] = check_speaker_gap(chapters, repo / "characters.md")
 
     judged = {}
     if args.llm:
