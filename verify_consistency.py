@@ -361,7 +361,8 @@ JUDGE_SYSTEM = (
 )
 
 
-def check_pronoun_shift(chapters: list, span: int = 2, min_count: int = 3) -> list:
+def check_pronoun_shift(chapters: list, characters: "Path | None" = None,
+                        span: int = 2, min_count: int = 3) -> list:
     """主人公の一人称が章をまたいで不自然に入れ替わっていないか（口調のブレ）。
 
     なぜ必要か（実測 2026-10-13・『鉄の肺と錆びた聖歌』17章版）:
@@ -372,10 +373,50 @@ def check_pronoun_shift(chapters: list, span: int = 2, min_count: int = 3) -> li
     一人称をそろえる仕組みが無い。characters.md の例文も一人称を書いていない
     （「……青い。君の歌は…」）ため、どちらを使うかの指定が存在しなかった。
 
-    判定: 直近 span 章ぶんの一人称の構成が前後で違ったら警告する。
+    判定: 章ごとの一人称の構成が前後で違ったら警告する。
     「混在」のまま続くのは一貫しているので警告しない（意図的な揺らぎと区別できないため）。
+
+    **characters.md が与えられた場合は話者を推定して見る**（実測 2026-10-13）。
+    全章ぶんを混ぜて数えると、シオン（俺）とルナ（私）が同じ章に出るだけで
+    「俺→混在」と誤検出された。設定に一人称が書いてあれば、**その人物の**
+    一人称だけを見るので、話者が違うことでの誤検出が消える。
     """
     out = []
+    # 設定があれば話者別に見る（「その人物の一人称が章をまたいで変わったか」）
+    if characters is not None:
+        try:
+            persons = _load_person_pronouns(characters)
+        except Exception:
+            persons = {}
+        if persons:
+            prev = {}
+            for num, _name, text in chapters:
+                dlg = re.findall(r"「([^」]*)」", text)
+                for person, info in persons.items():
+                    pron = info["pron"]
+                    # その人物が話している台詞だけを抜く（口調の語尾で話者を推定）
+                    mine = [d for d in dlg if _speaker_of(d, persons) == person]
+                    # 一人称が1つも出ていない台詞は判定に入れない（「混在」にすると誤検出）。
+                    # 実測 2026-10-13: ルナの「あなたの正体なのですね」に一人称が無く、
+                    # 「私」と「混在」が交互に出るだけで2件の誤検出になった。
+                    mine = [d for d in mine
+                            if any(x in d for x in ("俺", "僕", "私"))]
+                    if not mine:
+                        continue
+                    used = sorted({x for x in ("俺", "僕", "私") for d in mine if x in d})
+                    cur = used[0] if len(used) == 1 else "混在"
+                    if person in prev and prev[person] != cur:
+                        out.append({
+                            "chapter": num,
+                            "from": prev[person],
+                            "to": cur,
+                            "detail": f"{person}の一人称が「{prev[person]}」から「{cur}」に"
+                                      f"切り替わった（設定は「{pron}」）",
+                        })
+                    prev[person] = cur
+            return out
+
+    # 設定が無い場合は全章ぶんを混ぜて見る（旧挙動）
     prev = None
     for num, _name, text in chapters:
         dlg = re.findall(r"「([^」]*)」", text)
@@ -385,7 +426,6 @@ def check_pronoun_shift(chapters: list, span: int = 2, min_count: int = 3) -> li
         if ore + boku + watashi < min_count:
             prev = None
             continue
-        # 台詞の一人称が1種類だけなら「俺」「僕」「私」、複数なら「混在」
         used = [n for n, c in (("俺", ore), ("僕", boku), ("私", watashi)) if c]
         cur = used[0] if len(used) == 1 else "混在"
         if prev is not None and prev != cur:
@@ -397,6 +437,45 @@ def check_pronoun_shift(chapters: list, span: int = 2, min_count: int = 3) -> li
             })
         prev = cur
     return out
+
+
+def _load_person_pronouns(characters: Path) -> dict:
+    """characters.md から「人物 → {pron, tails}」を読む（voice と共通で使う）。"""
+    text = read(characters)
+    persons = {}
+    for b in re.split(r"^##\s+", text, flags=re.M)[1:]:
+        head = b.splitlines()[0] if b.splitlines() else ""
+        raw = re.sub(r"[（(][^)）]*[)）]", "", head).strip()
+        raw = re.sub(r"^\d+[.．、]?\s*", "", raw)
+        raw = re.split(r"[：:]", raw)[-1].strip()
+        nm = re.search(r"[ァ-ヶー]{2,6}$", raw) or re.search(r"[ぁ-ん一-龥]{2,6}$", raw)
+        name = nm.group(0) if nm else None
+        if not name:
+            continue
+        pm = re.search(r"一人称[^:：]*[:：][^「]*「([^」]+)」", b)
+        pron = pm.group(1) if pm else None
+        tail_words = []
+        for t in re.findall(r"口癖[^:：]*[:：](.+)", b):
+            for q in re.findall(r"「([^」]+)」", t):
+                core = re.sub(r"[（(][^)）]*[)）]", "", q).strip()
+                if len(core) >= 3:
+                    tail_words.append(core[-3:])
+        if "丁寧" in b or "婉曲" in b or "流麗" in b:
+            tail_words += ["わね", "でしょう", "かしら", "ますわ"]
+        if pron:
+            persons[name] = {"pron": pron, "tails": tail_words}
+    return persons
+
+
+def _speaker_of(line: str, persons: dict) -> "str | None":
+    """台詞の口調（語尾）から話者を推定する。一意に決まらない場合は None。"""
+    hit = [n for n, p in persons.items() if p["tails"] and any(t in line for t in p["tails"])]
+    hit2 = [n for n in hit if persons[n]["pron"] in line]
+    if len(hit2) == 1:
+        return hit2[0]
+    if len(hit) == 1:
+        return hit[0]
+    return None
 
 
 def check_term_shift(chapters: list, characters: Path, span: int = 2) -> list:
@@ -534,45 +613,9 @@ def check_voice_pronoun_conflict(chapters: list, characters: Path) -> list:
     一人称（僕たち）が同じ台詞に同居**しているときだけ警告する（安全側）。
     """
     try:
-        text = read(characters)
+        persons = _load_person_pronouns(characters)
     except Exception:
         return []
-    # 設定の人物ごとの一人称と口調の語尾を抜く
-    # 形式: 「0. **一人称...**: **「俺」**」と「口癖: 「調律しましょう」」
-    blocks = re.split(r"^##\s+", text, flags=re.M)
-    persons = {}
-    for b in blocks[1:]:
-        head = b.splitlines()[0] if b.splitlines() else ""
-        # 見出しは「1. シオン (Shion)」「5. 追加キャラクター：リナ (Lina)」の形。
-        # ローマ字を落とし、番号・肩書き・ローマ字を除いた**日本語の名前**を取る。
-        raw = re.sub(r"[（(][^)）]*[)）]", "", head).strip()   # ローマ字を落とす
-        raw = re.sub(r"^\d+[.．、]?\s*", "", raw)             # 先頭の番号
-        raw = re.split(r"[：:]", raw)[-1].strip()             # 「追加キャラクター：リナ」
-        nm = re.search(r"[ァ-ヶー]{2,6}$", raw) or re.search(r"[ぁ-ん一-龥]{2,6}$", raw)
-        name = nm.group(0) if nm else None
-        if not name:
-            continue
-        pm = re.search(r"一人称[^:：]*[:：][^「]*「([^」]+)」", b)
-        pron = pm.group(1) if pm else None
-        # 口調の語尾＝口癖の**語尾部分**。口癖行は「調律しましょう」「不協和ですね」なので、
-        # 括弧を除いた本体の**末尾2〜4文字**を語尾として取る。
-        # （「わね」「でしょう」という語尾ワードの照合では、口癖が固有名詞だと拾えなかった。
-        #   実測 2026-10-13: ルナの口癖から語尾が取れず、第13章の「僕たち」を見逃した）
-        tail_words = []
-        for t in re.findall(r"口癖[^:：]*[:：](.+)", b):
-            for q in re.findall(r"「([^」]+)」", t):
-                core = re.sub(r"[（(][^)）]*[)）]", "", q).strip()
-                if len(core) >= 3:
-                    tail_words.append(core[-3:])       # 口癖の語尾そのもの
-        # 口癖に加えて、その人物の話し方を示す**語尾ワード**も見る。
-        # 口癖は「調律しましょう」なので「わね」は出てこない。第13章の実測では
-        # ルナの台詞が「試してみる価値はあるわね。…僕たちの欠陥が…」だったので、
-        # 「わね」を語尾として持たせないと見逃す。
-        voice_tail = re.search(r"文の長さ|丁寧|婉曲|流麗", b)
-        if voice_tail and ("丁寧" in b or "婉曲" in b or "流麗" in b):
-            tail_words += ["わね", "でしょう", "かしら", "ますわ"]
-        if pron or tail_words:
-            persons[name] = {"pron": pron, "tails": tail_words}
     if not persons:
         return []
 
@@ -594,7 +637,7 @@ def check_voice_pronoun_conflict(chapters: list, characters: Path) -> list:
                     cur = found
                 continue
             # 口調から話者を推定（一人称＋語尾の両方が設定と食い違う人物を探す）
-            speaker = _guess_speaker_by_voice(l, persons) or cur
+            speaker = _speaker_of(l, persons) or cur
             if speaker not in persons:
                 continue
             p = persons[speaker]
@@ -611,23 +654,6 @@ def check_voice_pronoun_conflict(chapters: list, characters: Path) -> list:
                                   f"設定の一人称は「{p['pron']}」です",
                     })
     return conflicts
-
-
-def _guess_speaker_by_voice(line: str, persons: dict) -> "str | None":
-    """台詞の口調（語尾）から話者を推定する。
-
-    複数の人物が同じ語尾を使う場合は None（推定できない）。
-    「わね」「ましょう」はルナ、「だぜ」はリナ、「クソったれ」はガラム、
-    「……」（沈黙）はシオン、といった具合に一意に決まるものだけ返す。
-    """
-    hit = [n for n, p in persons.items() if p["tails"] and any(t in line for t in p["tails"])]
-    # 一人称も材料に入れる（「私」ならルナかゼノス）
-    hit2 = [n for n in hit if persons[n]["pron"] in line] if hit else []
-    if len(hit2) == 1:
-        return hit2[0]
-    if len(hit) == 1:
-        return hit[0]
-    return None
 
 
 def outline_block(outline_text: str, ch: int) -> str:
@@ -884,7 +910,7 @@ def main() -> int:
     if "exposition_dialogue" in only:
         mech["exposition_dialogue"] = check_exposition_dialogue(chapters)
     if "pronoun_shift" in only:
-        mech["pronoun_shift"] = check_pronoun_shift(chapters)
+        mech["pronoun_shift"] = check_pronoun_shift(chapters, repo / "characters.md")
     if "term_shift" in only:
         mech["term_shift"] = check_term_shift(chapters, repo / "characters.md")
     if "speaker_gap" in only:
