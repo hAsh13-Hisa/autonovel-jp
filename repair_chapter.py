@@ -16,7 +16,11 @@
 
 使い方（リポジトリの venv で。.env を読む）:
   uv run python repair_chapter.py chapters/ch_05.md
-  uv run python repair_chapter.py chapters/ch_05.md --out /tmp/ch_05_fixed.md --max-rounds 2
+  uv run python repair_chapter.py chapters/ch_05.md --out /tmp/ch_05_fixed.md --max-rounds 4
+
+会話を足す修復（insert）は 1ラウンドで1箇所しか直せない（最も薄い区画の1段落）。
+セリフ比が大きく届いていない章は 4〜8ラウンド必要（実測 2026-10-13: 第18章は
+セリフ比29.2%の状態から4ラウンドで31.9%まで回復。50%にはまだ届かない）。
   uv run python repair_chapter.py chapters/ch_05.md --dry-run     # 直せる箇所の列挙だけ
 
 exit 0 = 修復後にゲート通過 / exit 1 = 通過しなかった（それでも修復版は書き出す）。
@@ -52,6 +56,18 @@ MIN_WINDOW_MIN = 0.30
 
 def norm(s: str) -> str:
     return re.sub(r"[\s\u3000]", "", s)
+
+
+def rc_dialogue_ratio(text: str) -> float:
+    """会話（「」で囲まれた部分）の文字割合。**文字ベース**（ゲートと同じ物さし）。
+
+    置き換えた箇所が本当に会話になったかを見るために使う。窓（500字区画）の
+    割り当てに影響されないので、修復の採用判定に使える。
+    """
+    body = norm(text)
+    if not body:
+        return 0.0
+    return len("".join(re.findall(r"「[^」]*」", body))) / len(body)
 
 
 def metaphor_counts(text: str) -> dict:
@@ -339,11 +355,22 @@ def _body(text: str) -> str:
 
 
 def block_ratios(body: str) -> list:
-    """ゲートと同じ物差し: 本文を500字ずつに区切った各区画の「会話を含む行」の割合。"""
+    """ゲートと同じ物さし: 本文を500字ずつに区切った各区画の**会話の文字割合**。
+
+    行ベースの「会話を含む行の割合」ではなく文字ベースにした。理由:
+    - ゲート（`verify_chapter_gates.py` の `min_window`）は**文字ベース**で判定する
+    - 行ベースだと「短い台詞1行＋長い地の文1行」が 50% と出て、
+      実際の会話の薄さを測れない（実測 2026-10-13: 第18章の修復が
+      2ラウンド続けて『見送り』になり、会話が1文字も増えなかった）
+    → 同じ物さしに揃えないと、修復は「改善したつもり」で何も直せない。
+    """
     out = []
     for i in range(0, len(body), WINDOW):
-        sl = [l.strip() for l in body[i:i + WINDOW].split("\n") if l.strip()]
-        out.append(sum(1 for l in sl if "「" in l or "」" in l) / len(sl) if sl else 0.0)
+        seg = body[i:i + WINDOW]
+        if len(seg) < WINDOW * 0.5:      # 端の半端な区画は判定に入れない（ゲートと同じ規則）
+            continue
+        quotes = "".join(re.findall(r"「[^」]*」", seg))
+        out.append(len(quotes) / len(seg) if seg else 0.0)
     return out
 
 
@@ -392,26 +419,40 @@ def insert_dialogue(text: str, log: list) -> str:
     if not new or "「" not in new:
         log.append("会話の案が返らなかったので見送り")
         return text
-    if not (0.7 * len(target) <= len(new) <= 1.5 * len(target)):
+    # 長さの許容幅。**地の文を会話に直すと自然に字数は減る**（地の文の描写を
+    # 削って台詞にするので）。旧 0.7〜1.5倍 だと短い段落がほぼ全部弾かれ、
+    # 実測（2026-10-13・第18章）では「75→130字」「75→155字」が両方見送りになり
+    # 会話が1文字も増えなかった。→ 0.5〜2.5倍に広げる（大幅な変化だけ弾く）。
+    if not (0.5 * len(target) <= len(new) <= 2.5 * len(target)):
         log.append(f"長さが変わりすぎたので見送り（{len(target)}→{len(new)}字）: {new[:60]}…")
         return text
     cand = text[:at] + new + text[at + len(target):]
+    # 合格条件は**窓のズレに影響されない2つだけ**にする:
+    #   (a) 置き換えた箇所自身が会話になった（dialogue_ratio が上がった）
+    #   (b) 章全体の会話の文字数が増えた（= 地の文を会話にした分が効いている）
+    #
+    # なぜ古い条件をやめたか（実測 2026-10-13・第18章）:
+    # 旧条件は「全体の最小窓が下がらない／薄い区画が増えない」を見ていたが、
+    # 地の文を会話に直すと字数が減り **500字の窓の境界がずれる**。
+    # その結果「対象の区画 17%→22%（改善）」なのに「全体の最小 17%→10%（＝別の窓が
+    # 最小になっただけ）」で全部棄却され、3ラウンド続けて会話が1文字も増えなかった。
+    # 窓の位置は直していないのに窓の割り当てで棄却するのは、直そうとしている
+    # ものと別の物を見ていた。→ 窓ズレの影響を受けない2条件に変える。
+    # 全体の最小窓（ゲートの判定そのもの）は多ラウンドで上昇していくので、
+    # ここでは判定に使わず記録だけにまわす。
+    b_dlg = len("".join(re.findall(r"「[^」]*」", text)))
+    a_dlg = len("".join(re.findall(r"「[^」]*」", cand)))
+    local_b, local_a = rc_dialogue_ratio(target), rc_dialogue_ratio(new)
     before_min, after_min = min_window_ratio(text), min_window_ratio(cand)
-    b_blocks, a_blocks = block_ratios(_body(text)), block_ratios(_body(cand))
-    got = a_blocks[idx] if idx < len(a_blocks) else 0.0
-    # 合格は「悪化していない」こと: 全体の最小が下がらない・薄い区画（下限30%）が増えない・
-    # 会話の量（区画の比率の和）が増える＝地の文を会話にした分が効いている。
-    thin_b = sum(1 for x in b_blocks if x < MIN_WINDOW_MIN)
-    thin_a = sum(1 for x in a_blocks if x < MIN_WINDOW_MIN)
-    if after_min < before_min or thin_a > thin_b or sum(a_blocks) <= sum(b_blocks):
+    if not (local_a > local_b and a_dlg > b_dlg):
         log.append(f"会話に置き換えても改善しないので見送り"
-                   f"（対象の区画 {r * 100:.0f}%→{got * 100:.0f}% / "
-                   f"全体の最小 {before_min * 100:.0f}%→{after_min * 100:.0f}% / "
-                   f"薄い区画 {thin_b}→{thin_a} / 会話の量 {sum(b_blocks):.1f}→{sum(a_blocks):.1f}）: {new[:60]}…")
+                   f"（置き換えた箇所 {local_b * 100:.0f}%→{local_a * 100:.0f}% / "
+                   f"章の会話 {b_dlg:,}→{a_dlg:,}字 / "
+                   f"全体の最小窓 {before_min * 100:.0f}%→{after_min * 100:.0f}%）: {new[:60]}…")
         return text
-    log.append(f"地の文を会話に置き換え（対象の区画 {r * 100:.0f}%→{got * 100:.0f}%、"
-               f"全体の最小 {before_min * 100:.0f}%→{after_min * 100:.0f}%、"
-               f"薄い区画 {thin_b}→{thin_a}）: {new[:100]}…")
+    log.append(f"地の文を会話に置き換え（箇所 {local_b * 100:.0f}%→{local_a * 100:.0f}%、"
+               f"章の会話 {b_dlg:,}→{a_dlg:,}字、"
+               f"全体の最小窓 {before_min * 100:.0f}%→{after_min * 100:.0f}%）: {new[:100]}…")
     return cand
 
 
@@ -465,7 +506,7 @@ def main() -> int:
     ap.add_argument("path", help="章ファイル")
     ap.add_argument("--out", default="", help="出力先（既定 <名前>_repaired.md）")
     ap.add_argument("--band", default=BAND_DEFAULT, help='"lo hi" 形式の文字数帯')
-    ap.add_argument("--max-rounds", type=int, default=2)
+    ap.add_argument("--max-rounds", type=int, default=4)
     ap.add_argument("--no-insert", action="store_true", help="会話の追加をしない")
     ap.add_argument("--dry-run", action="store_true", help="直せる箇所を数えるだけ")
     ap.add_argument("--only", default="symbol,dup,metaphor,insert",
