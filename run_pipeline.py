@@ -204,9 +204,23 @@ def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.Co
         return fake
 
 
+def pyexe() -> str:
+    """このリポジトリの .venv のインタプリタ。無ければシステムの python3。"""
+    cand = Path(__file__).parent / ".venv" / "bin" / "python"
+    return str(cand) if cand.exists() else "python3"
+
+
 def uv_run(script: str, timeout: int = 600) -> subprocess.CompletedProcess:
-    """Shorthand for 'uv run python <script>' from project root."""
-    return run_tool(f"uv run python {script}", timeout=timeout)
+    """'python <script>' を .venv のインタプリタで実行する。
+
+    なぜ `uv run` をやめたか（実測 2026-10-13）: `uv run` は
+    `UV_PROJECT_ENVIRONMENT` を無視して uv が独自管理する python3.12 を
+    使い、その環境には dotenv も httpx も入っていない。
+    -> evaluate.py が ModuleNotFoundError で落ち、改訂ループが
+    「評価が読めない」として止まった（低得点ではない）。
+    .venv 直叩きなら本番と同じパッケージが見える。
+    """
+    return run_tool(f'"{pyexe()}" {script}', timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +611,7 @@ def trial_chapter_test(state: dict, total: int) -> tuple:
         return _trial_fail(state, ch_file, "", "", -1.0, "試作のドラフトに失敗")
 
     gate_cmd = (f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
-                f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} ")
+                f'"{pyexe()}" verify_chapter_gates.py --band {CHAPTER_GATE_BAND} ')
     gate = run_tool(gate_cmd + f"chapters/ch_{ch:02d}.md", timeout=180)
     repair_out, healed = "", False
     if gate.returncode != 0:
@@ -772,7 +786,7 @@ def run_drafting(state: dict) -> dict:
                 # 破棄するのは GATE_WARN_ITEMS 以外の項目（既定: 文字数・重複・記号・比喩の型）。
                 # セリフ比・最小窓は初稿では [WARN] 記録のみ（完成稿の物差し。2026-10-03 の実測で判断）
                 gate_cmd = (f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
-                            f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} ")
+                            f'"{pyexe()}" verify_chapter_gates.py --band {CHAPTER_GATE_BAND} ')
                 gate = run_tool(gate_cmd + f"chapters/ch_{ch:02d}.md", timeout=180)
                 healed = False
                 if gate.returncode != 0:
@@ -969,7 +983,7 @@ def gate_cmd_for(path: str) -> str:
     改訂は完成稿の物さしを当てるので `revision_gate_cmd_for` を使う。
     """
     return (f'AUTONOVEL_GATE_WARN_ITEMS="{GATE_WARN_ITEMS}" '
-            f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} {path}")
+            f'"{pyexe()}" verify_chapter_gates.py --band {CHAPTER_GATE_BAND} {path}')
 
 
 def append_exposition_note(extra: str, ch_num: int) -> str:
@@ -1020,7 +1034,7 @@ def revision_gate_cmd_for(path: str) -> str:
     生原稿を落とさない設定が改訂の品質も落とす抜け穴になっていた。
     """
     return (f'AUTONOVEL_GATE_WARN_ITEMS="{REVISION_GATE_WARN_ITEMS}" '
-            f"uv run python verify_chapter_gates.py --band {CHAPTER_GATE_BAND} {path}")
+            f'"{pyexe()}" verify_chapter_gates.py --band {CHAPTER_GATE_BAND} {path}')
 
 
 def changed_chapters() -> list:
@@ -1187,7 +1201,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         apply_cuts = BASE_DIR / "apply_cuts.py"
         if apply_cuts.exists():
             step("Applying mechanical cuts (OVER-EXPLAIN, REDUNDANT)...")
-            cuts_res = run_tool("uv run python apply_cuts.py all "
+            cuts_res = uv_run("apply_cuts.py all "
                                 "--types OVER-EXPLAIN REDUNDANT --min-fat 15", timeout=300)
             if cuts_res is not None and cuts_res.returncode != 0:
                 # apply_cuts は「適用に失敗した箇所がある」と exit 2 を返す。
@@ -1279,7 +1293,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                 step(f"Using the strength-transplant brief for Ch {ch_num}")
             elif gen_brief.exists():
                 step(f"Generating brief for Ch {ch_num}...")
-                run_tool(f"uv run python gen_brief.py --panel {ch_num}", timeout=300)
+                uv_run(f"gen_brief.py --panel {ch_num}", timeout=300)
                 # gen_brief.py may write to briefs/ — find the most recent brief
                 brief_candidates = sorted(
                     BRIEFS_DIR.glob(f"ch{ch_num:02d}*.md"),
@@ -1450,8 +1464,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             
             # Step 2: Parse the review
             step("Parsing review...")
-            parse_result = run_tool(
-                "uv run python review.py --parse", timeout=60)
+            parse_result = uv_run("review.py --parse", timeout=60)
             print(parse_result.stdout if parse_result else "")
             
             # Step 3: Check stopping condition
@@ -1507,7 +1520,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                     plan_file = BRIEFS_DIR / "arc_rebuild_plan.json"
                     if ARC_REBUILD == "apply" and plan_file.exists():
                         # 設計が人手で確認ずみ（ファイルが存在する）なので採用して作り直す
-                        res = run_tool(f"uv run python rebuild_arc.py "
+                        res = uv_run(f"rebuild_arc.py "
                                        f"--plan-file {plan_file} --apply",
                                        timeout=ARC_REBUILD_TIMEOUT * 24)
                         step(f"骨格を作り直しました（exit {res.returncode}）")
@@ -1523,7 +1536,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                         stop_review_loop = True    # 作り直した後は改訂からやり直す
                     else:
                         # 設計だけ出して止まる（章数を変えるので人間の確認を取る）
-                        res = run_tool("uv run python rebuild_arc.py --from-review",
+                        res = uv_run("rebuild_arc.py --from-review",
                                        timeout=ARC_REBUILD_TIMEOUT)
                         print((res.stdout or "")[-2500:])
                         step("骨格の設計を出しました。この工程は章数を変えるので、"
@@ -1555,7 +1568,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                         step(f"この周で直す章の上限（{MAX_REVISIONS_PER_CYCLE}章）に達したので残りは次周へ")
                         break
                     revised_in_review.add(ch_num)
-                    run_tool(f"uv run python gen_brief.py --from-review {ch_num}", timeout=300)
+                    uv_run(f"gen_brief.py --from-review {ch_num}", timeout=300)
                     brief = BRIEFS_DIR / f"ch{ch_num:02d}_review.md"
                     if not brief.exists():
                         step(f"Ch {ch_num}: 指示書が作れなかったので飛ばします")
@@ -1571,8 +1584,8 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             step("Running mechanical cleanup pass...")
             apply_cuts_py = BASE_DIR / "apply_cuts.py"
             if apply_cuts_py.exists():
-                cuts_res = run_tool(
-                    "uv run python apply_cuts.py all --types OVER-EXPLAIN REDUNDANT --min-fat 15",
+                cuts_res = uv_run(
+                    "apply_cuts.py all --types OVER-EXPLAIN REDUNDANT --min-fat 15",
                     timeout=300)
                 if cuts_res is not None and cuts_res.returncode != 0:
                     step(f"WARNING: 機械的な削除が一部失敗しました（exit {cuts_res.returncode}）。"
@@ -1637,7 +1650,7 @@ def run_export(state: dict) -> dict:
     build_tex = BASE_DIR / "typeset" / "build_tex.py"
     if build_tex.exists():
         step("Building LaTeX content...")
-        run_tool(f"uv run python typeset/build_tex.py", timeout=120)
+        uv_run("typeset/build_tex.py", timeout=120)
 
         # 5. Typeset with tectonic (if available)
         novel_tex = BASE_DIR / "typeset" / "novel.tex"
