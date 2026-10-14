@@ -32,14 +32,86 @@ SPINE_PER_PAGE = 0.0025
 
 
 def find_font(name, style="Regular"):
+    """名前のフォントの実パス。見つからなければ None。
+
+    なぜ fc-match の結果を捨てるか（実測 2026-10-14）: fc-match は存在しない名前でも
+    必ずどれかを返す（Bebas Neue を尋ねると DejaVuSans が返る）。この環境に
+    日本語フォントは10本ある（IPAPGothic 等）のに、DejaVuSans には日本語が無いため
+    表紙のタイトルが全部描けず、HISA というバッジ文字だけが残った。
+    → 返り値を検査して「本当にその名前を含む」ときだけ採用する。
+    """
     import subprocess
     result = subprocess.run(
-        ["fc-match", f"{name}:style={style}", "--format=%{file}"],
+        ["fc-match", f"{name}:style={style}", "--format=%{file} %{family}"],
         capture_output=True, text=True,
     )
-    path = result.stdout.strip()
+    parts = result.stdout.strip().split(" ", 1)
+    path = parts[0] if parts else ""
+    family = parts[1] if len(parts) > 1 else ""
     if path and Path(path).exists():
-        return path
+        # 求めた名前（空白を除いたもの）が返りに含まれない＝別のフォントで代用された
+        want = "".join(name.split())
+        got = "".join(family.split())
+        if want and want.lower() in got.lower():
+            return path
+    return None
+
+
+def font_has_jp(path) -> bool:
+    """そのフォントで日本語が実際に描けるか（豆腐にならないか）。
+
+    なぜ必要か（実測 2026-10-14）: DejaVuSerif は「明朝らしい」名前の欧文フォントで
+    日本語が入っていない。名前で探すとこれを採用してしまい、表紙のタイトルが
+    全部空枠（豆腐）になった。→ 実物を開いて日本語の文字を持っているか確かめる。
+    """
+    if not path:
+        return False
+    try:
+        from fontTools.ttLib import TTFont, TTCollection
+        try:
+            fonts = TTCollection(path).fonts
+        except Exception:
+            fonts = [TTFont(path, fontNumber=0, lazy=True)]
+        for f in fonts:
+            for table in f["cmap"].tables:
+                if ord("鉄") in table.cmap:      # 日本語の漢字（この作品の題にも出る字）
+                    return True
+        return False
+    except Exception:
+        # fontTools が無い等で確かめられないときは、ファイル名の日本語フォントらしさで判断
+        name = str(path).lower()
+        return any(k in name for k in ("ipag", "ipap", "noto", "cjk", "takao",
+                                       "wqy", "zenhei", "vl-", "genjyu", "源暎"))
+
+
+def find_jp_font(gothic=True):
+    """日本語が描けるフォント（この環境で実在するもの）を順に探す。
+
+    表紙のタイトルに日本語を入れると決まったので、find_font とは別に
+    「日本語が入っていること」を確実にして返す経路を作る。
+    実測 2026-10-14: /usr/share/fonts に日本語フォントは10本（全てゴシック系）。
+    明朝体は1本も無いので、gothic=False では日本語が描ける明朝が見つからず
+    DejaVuSerif（欧文のみ）に落ちて豆腐になっていた。
+    → font_has_jp() で日本語が描けるものだけ採用する。
+    """
+    candidates = (
+        ("IPAPGothic", "IPAGothic", "Noto Sans CJK JP", "Noto Sans JP",
+         "TakaoPGothic", "WenQuanYi Zen Hei", "VL PGothic", "sans-serif")
+        if gothic else
+        ("IPAMincho", "Noto Serif CJK JP", "Noto Serif JP", "TakaoPMincho",
+         "源暎", "IPAGothic", "IPAPGothic", "Noto Sans CJK JP", "serif")
+    )
+    for name in candidates:
+        p = find_font(name)
+        if p and font_has_jp(p):
+            return p
+    # 最後の手段: fontconfig に日本語対応フォントを直接尋ねる
+    import subprocess
+    r = subprocess.run(["fc-match", ":lang=ja", "--format=%{file}"],
+                       capture_output=True, text=True)
+    cand = r.stdout.strip()
+    if cand and Path(cand).exists() and font_has_jp(cand):
+        return cand
     return None
 
 
@@ -128,8 +200,17 @@ def compose_cover(
     gi = find_font("EB Garamond", "Italic")
     bebas = find_font("Bebas Neue", "Regular")  # ultra-heavy display face
 
-    # Display font for title/spine (Bebas Neue if available, else Garamond Bold)
-    display_face = bebas if bebas else gb
+    # 表示フォントは日本語が描けるものを必ず使う。
+    # なぜ: タイトル・著者は日本語で入る（実測 2026-10-13 の『鉄の肺と錆びた聖歌』）。
+    # Bebas Neue や EB Garamond は英語専用で、この環境では fc-match が DejaVuSans を
+    # 返していた（＝日本語が入っていない）ので、表紙の文字が全部消えていた。
+    # → 日本語フォントを優先し、無いときだけ英語フォントに戻す。
+    jp_gothic = find_jp_font(gothic=True)
+    jp_mincho = find_jp_font(gothic=False)
+
+    # Display font for title/spine（日本語が必須なので jp_gothic を最優先）
+    display_face = jp_gothic or bebas or gb
+    serif_face = jp_mincho or gr or display_face
 
     # Front cover text sizes (relative to trim width in pixels)
     title_large = int(px_trim_w * 0.10)
@@ -137,8 +218,11 @@ def compose_cover(
     author_size = int(px_trim_w * 0.06)
     subtitle_size = int(px_trim_w * 0.032)
 
-    title_font = ImageFont.truetype(display_face, title_large) if display_face else ImageFont.load_default()
-    title_small_font = ImageFont.truetype(display_face, title_small) if display_face else ImageFont.load_default()
+    # タイトルは明朝（serif_face）。著者の好み＝画像内の文字は明朝・筆文字で大きく、
+    # ゴシック体は使わない（memory の設定）。明朝が無い環境だけゴシックに戻す。
+    title_face = serif_face
+    title_font = ImageFont.truetype(title_face, title_large) if title_face else ImageFont.load_default()
+    title_small_font = ImageFont.truetype(title_face, title_small) if title_face else ImageFont.load_default()
     # Colors — amber/bronze that belongs in the linocut palette
     title_color = (218, 165, 72, 255)    # warm amber-gold
     author_color = (218, 165, 72, 255)   # same amber
@@ -194,7 +278,7 @@ def compose_cover(
         spine_cx = spine_left + px_spine // 2
 
         # Bebas Neue for spine — single line, title + author fills the full height
-        spine_face = display_face
+        spine_face = title_face
         spine_text = f"{title.upper()}   \u2022   {author.upper()}"
 
         # After rotation: text WIDTH becomes the spine's vertical length.
@@ -325,6 +409,12 @@ def compose_cover(
         stem = Path(art_path).stem
         suffix = "_preview" if preview else "_print"
         output_path = ART_DIR / f"{stem}{suffix}.png"
+
+    # 出力先のフォルダが無いと FileNotFoundError になる。
+    # 実測 2026-10-14: 既定の ART_DIR（autonovel-jp/art/）が存在しない状態で
+    # 表紙を作ろうとして落ちた。明示指定のときも親フォルダが無ければ同じなので、
+    # どちらもここで作る。
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     ext = Path(output_path).suffix.lower()
     if ext == ".pdf":

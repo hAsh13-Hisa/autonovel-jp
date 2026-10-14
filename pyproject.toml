@@ -6,4 +6,8 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.2.2",
+    # 表紙の作成（gen_cover_print.py / gen_cover_composite.py / gen_art.py）に必要。
+    # 実測 2026-10-14: 依存に無く venv にも入っていなかったため、この3本が
+    # ModuleNotFoundError: No module named 'PIL' で動かなかった。
+    "pillow>=10.0.0",
 ]

@@ -181,6 +181,11 @@ def composite_cover(
         stem = Path(art_path).stem
         output_path = BASE_DIR / "art" / f"{stem}_titled.png"
 
+    # 出力先のフォルダが無いと FileNotFoundError になる（実測 2026-10-14）。
+    # 既定の autonovel-jp/art/ が存在しない状態で落ちた。明示指定のときも
+    # 親フォルダが無ければ同じなので、どちらもここで作る。
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
     result.save(str(output_path), "PNG")
     print(f"Saved: {output_path} ({Path(output_path).stat().st_size:,} bytes)")
     print(f"  Preset: {preset}, title size: {title_size}px")
