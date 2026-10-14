@@ -119,14 +119,16 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 | `landing/index.html` | 本家まま（ランディングページテンプレ） |
 | `main.py` | 本家由来の stub（Hello World）のまま |
 | `draft_chapter_beat.py`（本家の既定ドラフター） | 本家まま・**既定からは外れました**。`run_pipeline.py` の drafting は fork 推奨の `draft_chapter_split.py` を呼びます（戻すなら env `AUTONOVEL_DRAFTER=draft_chapter_beat.py`） |
-| `draft_chapter.py` / `draft_chapter_one.py` / `draft_chapter_single.py` / `run_drafts.py` | **本家まま・未検証**。単発または一括のドラフター。既定の `draft_chapter_split.py` を使う限り動きません。実測 2026-10-14: この4本は `BASE_DIR`（＝自分が置かれた場所）固定で、作り直し版の `outline.md` / `world.md` / `characters.md` を読めません。使う場合は `draft_chapter_split.py` と同じ `project_dir()` 対応が必要 |
+| `draft_chapter.py` / `draft_chapter_beat.py` / `draft_chapter_one.py` / `draft_chapter_single.py` / `run_drafts.py` | **本家まま・使わないこと**。単発または一括のドラフター。実測 2026-10-14: `draft_chapter_single.py 1` は動くが、**作り直し版の設定を読まず**リポジトリ側の古い設定（別の章タイトル・世界観）で1章を書き直してしまった（`BASE_DIR` 固定）。`.env` だけは直したが、`outline.md` / `world.md` / `characters.md` の探索は未対応。**既定の `draft_chapter_split.py` を使う限り動かない**ので、使う場合は同じ `project_dir()` 対応が必要 |
 | `quota_guard.py` | **未使用**（429 連続で停止マーカーを置く機能は `llm.py` に内蔵済み。実測 2026-10-14: どのスクリプトも import していない） |
 | `PIPELINE.md`, `WORKFLOW.md`, `CRAFT.md`, `ANTI-SLOP.md`, `ANTI-PATTERNS.md`, `program.md`, 本家README | **英語のまま未翻訳**（本家の設計参照ドキュメント） |
 | `.gitignore`, `pyproject.toml`, `uv.lock`, `.python-version` | モデル非依存のため本家まま |
 
-> 動作実績があるのは **seed → foundation → drafting → evaluate/adversarial → revision** までです。
-> Art（fal.ai）・Audiobook（ElevenLabs）・Typeset の各工程は、本家設計を引き継いでいるだけで
-> このリポジトリでは検証していません（`build_tex.py` のみ、上記の通り動作確認済み）。
+> 動作実績があるのは **seed → foundation → drafting → evaluate/adversarial → revision → 読者パネル → 組版** までです。
+> 読者パネル（`panel_one_question.py`）は実測 2026-10-14 に作り直し版17章すべてを測定し、
+> 平均 7.9 / 17章すべて「続きが読みたい」を確認（引用が本文と不一致は1件＝検査が効いている）。
+> Art（fal.ai）・Audiobook（ElevenLabs）の各工程は、本家設計を引き継いでいるだけで
+> このリポジトリでは検証していません（表紙2件と `build_tex.py` は検証済み）。
 
 ---
 
