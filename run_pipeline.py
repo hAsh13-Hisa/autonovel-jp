@@ -301,6 +301,11 @@ def uv_run(script: str, timeout: int = 600) -> subprocess.CompletedProcess:
     「評価が読めない」として止まった（低得点ではない）。
     .venv 直叩きなら本番と同じパッケージが見える。
     """
+    # 共有ガイド（MYSTERY.md / CRAFT.md / voice.md 等）はリポジトリ側にしか無い。
+    # 作り直しのコピー先で動かすと Path(__file__).parent がコピー先自身になり
+    # 「カレントに無いのでリポジトリを探す」が同じ場所を探して終わっていた。
+    # → リポジトリの場所を env で渡す（実測 2026-10-14）。
+    os.environ.setdefault("AUTONOVEL_REPO", str(BASE_DIR))
     return run_tool(f'"{pyexe()}" {script}', timeout=timeout)
 
 

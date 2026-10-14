@@ -14,6 +14,73 @@ from collections import Counter
 BASE_DIR = Path(__file__).parent
 CHAPTERS_DIR = BASE_DIR / "chapters"
 
+def repo_dir() -> Path:
+    """autonovel-jp のリポジトリ本体（共有ガイドの置き場所）。
+
+    なぜ必要か（実測 2026-10-14）: コピー先で動かすと BASE_DIR は
+    Path(__file__).parent＝コピー先自身を指す。すると「カレントに無いので
+    リポジトリ側を探す」が同じ場所を探して終わり、MYSTERY.md 等の共有ガイドが
+    見つからなかった。
+    → AUTONOVEL_REPO で渡す（run_pipeline.py が設定する）。無い場合は
+      自分の場所を使う（＝リポジトリから直接動かす従来の動作）。
+    """
+    env = os.environ.get("AUTONOVEL_REPO")
+    if env and Path(env).is_dir():
+        return Path(env)
+    return BASE_DIR
+
+
+def project_dir() -> Path:
+    """作品ファイル（seed.txt / world.md / characters.md / outline.md 等）の場所。
+
+    なぜ BASE_DIR をそのまま使わないか（実測 2026-10-14）: 作り直しの作業は
+    コピー先（/opt/data/cache/scratch/final 等）で行う。BASE_DIR は
+    Path(__file__).parent＝自分が置かれた場所で固定なので、作り直し版の設定を
+    読み書きできず、正典 canon.md が 10/8 の古いまま残っていた
+    （一人称「俺」の指定が正典に入らない）。
+    → カレントを優先し、作品ファイルが無いときだけ自分の場所を使う。
+      （他のスクリプトと同じ規則: pyexe() / chapters_dir() と同じ考え方）
+    """
+    here = Path.cwd()
+    if (here / "characters.md").exists() or (here / "seed.txt").exists() \
+            or (here / "outline.md").exists():
+        return here
+    return BASE_DIR
+
+
+def read_project_file(name: str) -> str:
+    """作品ファイルを読む。カレントに無ければリポジトリ側から読む。
+
+    なぜ1ファイルずつフォールバックするか（実測 2026-10-14）: 作り直しの
+    コピー先には seed.txt / world.md / characters.md はあっても MYSTERY.md や
+    CRAFT.md が無いことがある。→ 作品に固有のファイルはカレント、
+    共有のガイド（MYSTERY/CRAFT/voice）はリポジトリにも探しに行く。
+    """
+    here = Path.cwd() / name
+    if here.exists():
+        return here.read_text(encoding="utf-8")
+    alt = repo_dir() / name
+    if alt.exists():
+        return alt.read_text(encoding="utf-8")
+    raise FileNotFoundError(
+        f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
+def read_project_file(name: str) -> str:
+    """作品ファイルを読む。カレントに無ければリポジトリ側から読む。
+
+    なぜ1ファイルずつフォールバックするか（実測 2026-10-14）: 作り直しの
+    コピー先には seed.txt / world.md / characters.md はあっても MYSTERY.md や
+    CRAFT.md が無いことがある。project_dir() をカレント一択にすると
+    FileNotFoundError で起動すらできない。
+    → 作品に固有のファイルはカレント、共有のガイド（MYSTERY/CRAFT/voice）は
+      リポジトリにも探しに行く。
+    """
+    here = Path.cwd() / name
+    if here.exists():
+        return here.read_text(encoding="utf-8")
+    alt = repo_dir() / name
+    if alt.exists():
+        return alt.read_text(encoding="utf-8")
+    raise FileNotFoundError(f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
 # The three vocabulary wells from voice.md
 WELL_MUSICAL = {
     "pitch", "tone", "interval", "chord", "note", "key", "octave", "fifth",
