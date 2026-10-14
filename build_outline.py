@@ -18,6 +18,41 @@ import llm
 
 CHAPTERS_DIR = BASE_DIR / "chapters"
 
+def repo_dir() -> Path:
+    """autonovel-jp のリポジトリ本体（共有ガイドの置き場所）。
+
+    なぜ必要か（実測 2026-10-14）: コピー先で動かすと BASE_DIR は
+    Path(__file__).parent＝コピー先自身を指す。
+    → AUTONOVEL_REPO で渡す（run_pipeline.py が設定する）。
+    """
+    env = os.environ.get("AUTONOVEL_REPO")
+    if env and Path(env).is_dir():
+        return Path(env)
+    return BASE_DIR
+
+
+def chapters_dir() -> Path:
+    """章ファイルのある場所。カレント優先（見つからなければリポジトリ側）。
+
+    なぜ: 作り直しの作業はコピー先で行う。BASE_DIR 固定だと作り直し版の
+    章を読めず、outline.md を古い章から作り直してしまう（実測 2026-10-14）。
+    """
+    here = Path.cwd() / "chapters"
+    if here.is_dir() and any(here.glob("ch_*.md")):
+        return here
+    return CHAPTERS_DIR
+
+
+def project_dir() -> Path:
+    """作品ファイル（characters.md / outline.md 等）の場所。カレント優先。"""
+    here = Path.cwd()
+    if (here / "characters.md").exists() or (here / "outline.md").exists() \
+            or (here / "chapters").is_dir():
+        return here
+    return BASE_DIR
+
+
+
 def call_model(prompt, max_tokens=1500):
     text = llm.call_judge(
         prompt,
@@ -34,7 +69,7 @@ def call_model(prompt, max_tokens=1500):
 
 def main():
     # Load supporting docs for context
-    characters = (BASE_DIR / "characters.md").read_text()[:3000]
+    characters = (project_dir() / "characters.md").read_text()[:3000]
     
     entries = []
     
@@ -72,7 +107,7 @@ JSON only, no other text."""
         print(f"  {ch:2d}. {title_line} ({wc}w)")
     
     # Load existing outline header info
-    old_outline = (BASE_DIR / "outline.md").read_text()
+    old_outline = (project_dir() / "outline.md").read_text()
     
     # Build new outline
     lines = []
@@ -146,7 +181,7 @@ JSON only, no other text."""
     lines.append("*Outline rebuilt from actual chapters, Cycle 5.*")
     
     out = '\n'.join(lines)
-    (BASE_DIR / "outline.md").write_text(out)
+    (project_dir() / "outline.md").write_text(out)
     print(f"\nSaved outline.md ({len(out.split())} words)")
 
 if __name__ == "__main__":
