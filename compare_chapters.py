@@ -26,6 +26,21 @@ import llm
 
 CHAPTERS_DIR = BASE_DIR / "chapters"
 
+
+def chapters_dir() -> Path:
+    """章ファイルのある場所。
+
+    なぜ既定の BASE_DIR をやめたか（実測 2026-10-14）: 作業はコピー先
+    （/opt/data/cache/scratch/final 等）で行うので、autonovel-jp/chapters/ は
+    空のことが多い。BASE_DIR 固定だと「存在しない章を数えて全章 Elo 1500」
+    という空の結果を出す（1回も比較していないのに順位表ができあがる）。
+    → カレントの chapters/ を優先し、無いときだけ BASE_DIR を使う。
+    """
+    here = Path.cwd() / "chapters"
+    if here.is_dir() and any(here.glob("ch_*.md")):
+        return here
+    return CHAPTERS_DIR
+
 def call_judge(prompt, max_tokens=4000):
     return llm.call_judge(
         prompt,
@@ -95,8 +110,9 @@ Respond with JSON:
 """
 
 def compare(ch_a, ch_b):
-    text_a = (CHAPTERS_DIR / f"ch_{ch_a:02d}.md").read_text()
-    text_b = (CHAPTERS_DIR / f"ch_{ch_b:02d}.md").read_text()
+    cdir = chapters_dir()
+    text_a = (cdir / f"ch_{ch_a:02d}.md").read_text()
+    text_b = (cdir / f"ch_{ch_b:02d}.md").read_text()
     
     # Truncate to ~3000 words each to fit context
     words_a = text_a.split()
@@ -180,7 +196,18 @@ def main():
         print(json.dumps(result, indent=2))
     else:
         # Full tournament
-        chapters = list(range(1, 25))
+        # なぜ 1〜24 を決め打ちするのをやめたか（実測 2026-10-14）: 作り直しで
+        # 17章になったあとも 1〜24 を数え、存在しない ch_18〜24 を比べようとして
+        # 全章 Elo 1500（＝1回も比較できていない）の順位表が出ていた。
+        # → chapters/ にあるファイルぶんだけを数える。
+        cdir = chapters_dir()
+        chapters = sorted(int(f.stem.split("_")[-1])
+                          for f in cdir.glob("ch_*.md")
+                          if f.stem.split("_")[-1].isdigit())
+        if not chapters:
+            print(f"章ファイルが見つかりません: {cdir}")
+            return
+        print(f"対象の章: {len(chapters)}章（{cdir}）")
         ranking, elo, matchups = run_tournament(chapters)
         
         print(f"\n{'='*50}")

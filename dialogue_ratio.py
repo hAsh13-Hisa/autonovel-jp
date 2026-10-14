@@ -7,7 +7,10 @@ Reports the metrics Hisa enforces (all validated 2026-08-28):
   - Character-based dialogue ratio (chars inside 「」 / total) — Hisa's 7:3 target
     is ~70% BY CHARACTERS. Line-based ratio overstates badly (a line with one
     short quote + a long prose paragraph counts as a "dialogue line").
-  - Total length (gate: >= 5,500-6,000 chars).
+  - Total length. 実際の合否は verify_chapter_gates.py の --band（既定 3,000字以上）
+    が決める。ここに出る 5,500-6,000 は目安であって、この数字だけで不合格にはならない。
+    （実測 2026-10-14: 章ゲートが 3,000字以上なのにこの表示が 5,500-6,000 を
+    「gate」と呼んでいたため、Hisa が見たときに数字が食い違って見える）
   - Sentence-level avg length measured on 。split (NOT 、split — 、-joined clauses
     are meaningful flow, not staccato fragments).
   - Duplicate-sentence scan (recursion check: >=10-char sentence appearing >=2x
@@ -32,7 +35,7 @@ def main(path: str) -> None:
     dlg = sum(len(q) for q in quotes)
     dlg_nb = sum(len(q) - 2 for q in quotes)
 
-    print(f"総文字数: {total}字  (gate: >=5500-6000)")
+    print(f"総文字数: {total}字  (目安 5500-6000 / 合否は章ゲートの --band、既定3000字以上)")
     print(f"台詞(括弧含む): {dlg}字 = {dlg / total * 100:.1f}%  (Hisa 7:3 = ~70%)")
     print(f"台詞(括弧除く): {dlg_nb}字 = {dlg_nb / total * 100:.1f}%")
     print(f"地文: {total - dlg}字 = {(total - dlg) / total * 100:.1f}%")
