@@ -114,11 +114,13 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 | 対象 | 状態 |
 |------|------|
 | `gen_audiobook.py`, `audiobook_voices.json`（ElevenLabs） | **本家まま・未使用**。オーディオブック工程はこの日本語版では未検証 |
-| `gen_cover_composite.py`, `gen_cover_print.py`（表紙PIL処理） | 本家まま・未使用 |
-| `typeset/` 以下（LaTeX・ePubテンプレ一式） | 本家まま・未使用（`build_tex.py` のみパス修正＋存在章だけ組むよう改修、空chaptersで動作確認済み） |
+| `gen_cover_composite.py`, `gen_cover_print.py`（表紙PIL処理） | **検証済み（2026-10-14）**。KDP 仕様（5.5×8.5インチ・背幅自動計算・300DPI）で表紙を作れることを確認。PIL 未インストール・出力フォルダ未作成・日本語が豆腐になる不具合3件を修正（`7b078fb`）。明朝体はこの環境に無いので日本語が描けるゴシック（IPAGothic）にフォールバックする |
+| `typeset/` 以下（LaTeX・ePubテンプレ一式） | 本家まま・未使用（**`build_tex.py` は検証済み 2026-10-14**。作り直し版17章を正しく組めることを確認。それ以前は `REPO_DIR` 固定で作り直し版の章を読めず空の tex ができていた） |
 | `landing/index.html` | 本家まま（ランディングページテンプレ） |
 | `main.py` | 本家由来の stub（Hello World）のまま |
 | `draft_chapter_beat.py`（本家の既定ドラフター） | 本家まま・**既定からは外れました**。`run_pipeline.py` の drafting は fork 推奨の `draft_chapter_split.py` を呼びます（戻すなら env `AUTONOVEL_DRAFTER=draft_chapter_beat.py`） |
+| `draft_chapter.py` / `draft_chapter_one.py` / `draft_chapter_single.py` / `run_drafts.py` | **本家まま・未検証**。単発または一括のドラフター。既定の `draft_chapter_split.py` を使う限り動きません。実測 2026-10-14: この4本は `BASE_DIR`（＝自分が置かれた場所）固定で、作り直し版の `outline.md` / `world.md` / `characters.md` を読めません。使う場合は `draft_chapter_split.py` と同じ `project_dir()` 対応が必要 |
+| `quota_guard.py` | **未使用**（429 連続で停止マーカーを置く機能は `llm.py` に内蔵済み。実測 2026-10-14: どのスクリプトも import していない） |
 | `PIPELINE.md`, `WORKFLOW.md`, `CRAFT.md`, `ANTI-SLOP.md`, `ANTI-PATTERNS.md`, `program.md`, 本家README | **英語のまま未翻訳**（本家の設計参照ドキュメント） |
 | `.gitignore`, `pyproject.toml`, `uv.lock`, `.python-version` | モデル非依存のため本家まま |
 

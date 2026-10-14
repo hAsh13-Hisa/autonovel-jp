@@ -6,7 +6,16 @@ from pathlib import Path
 
 # Repo-root relative (works when run from anywhere; script lives in typeset/)
 REPO_DIR = Path(__file__).resolve().parent.parent
-CHAPTERS_DIR = str(REPO_DIR / "chapters")
+# 章は作り直し版（カレント）を優先する。
+# なぜ: 作り直しの作業はコピー先で行うので、REPO_DIR/chapters は空のことが多い。
+# 実測 2026-10-14: 17章の作り直し版を組もうとして空の chapters を読み、
+# 章0件の tex ができあがっていた（README には「空chaptersで動作確認済み」と
+# あったので、実際の小説では未検証だった）。
+# → カレントの chapters を優先し、無いときだけ REPO_DIR に戻す。
+_cwd_chapters = Path.cwd() / "chapters"
+CHAPTERS_DIR = str(_cwd_chapters if (_cwd_chapters.is_dir() and
+                                     any(_cwd_chapters.glob("ch_*.md")))
+                   else REPO_DIR / "chapters")
 OUT_DIR = str(REPO_DIR / "typeset")
 
 def latex_escape(t):
