@@ -21,7 +21,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+# .env はカレント（＝作り直し版のコピー先）を優先し、無ければリポジトリ側。
+# なぜ: 作り直しの作業はコピー先で行うので、エンドポイントの設定も
+# コピー先の .env を使うべき。リポジトリ側の .env は git 管理外で
+# 存在しないことがある（実測 2026-10-14）。
+_cwd_env = Path.cwd() / ".env"
+load_dotenv(_cwd_env if _cwd_env.exists() else BASE_DIR / ".env")
 
 from draft_chapter_split import (  # noqa: E402
     CHAPTERS_DIR, TARGET_CHAPTER, call_writer, character_names, dialogue_ratio,

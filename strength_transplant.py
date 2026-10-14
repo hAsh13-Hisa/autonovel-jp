@@ -39,8 +39,14 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 REPO = BASE_DIR      # main() で --dir に合わせて差し替える（llm.py の探索に使う）
 try:
+    # .env があれば読む（単体で叩いても動くように）
+    # .env はカレント（＝作り直し版のコピー先）を優先し、無ければリポジトリ側。
+    # なぜ: 作り直しの作業はコピー先で行うので、エンドポイントの設定も
+    # コピー先の .env を使うべき。リポジトリ側の .env は git 管理外で
+    # 存在しないことがある（実測 2026-10-14）。
     from dotenv import load_dotenv
-    load_dotenv(BASE_DIR / ".env")
+    _cwd_env = Path.cwd() / ".env"
+    load_dotenv(_cwd_env if _cwd_env.exists() else BASE_DIR / ".env")
 except Exception:  # noqa: BLE001
     pass
 
