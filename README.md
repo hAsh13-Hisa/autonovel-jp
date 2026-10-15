@@ -125,8 +125,24 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 | `draft_chapter_beat.py`（本家の既定ドラフター） | 本家まま・**既定からは外れました**。`run_pipeline.py` の drafting は fork 推奨の `draft_chapter_split.py` を呼びます（戻すなら env `AUTONOVEL_DRAFTER=draft_chapter_beat.py`） |
 | `draft_chapter.py` / `draft_chapter_beat.py` / `draft_chapter_one.py` / `draft_chapter_single.py` / `run_drafts.py` | **本家まま・使わないこと**。単発または一括のドラフター。実測 2026-10-14: `draft_chapter_single.py 1` は動くが、**作り直し版の設定を読まず**リポジトリ側の古い設定（別の章タイトル・世界観）で1章を書き直してしまった（`BASE_DIR` 固定）。`.env` だけは直したが、`outline.md` / `world.md` / `characters.md` の探索は未対応。**既定の `draft_chapter_split.py` を使う限り動かない**ので、使う場合は同じ `project_dir()` 対応が必要 |
 | `quota_guard.py` | **未使用**（429 連続で停止マーカーを置く機能は `llm.py` に内蔵済み。実測 2026-10-14: どのスクリプトも import していない） |
-| `PIPELINE.md`, `WORKFLOW.md`, `CRAFT.md`, `ANTI-SLOP.md`, `ANTI-PATTERNS.md`, `program.md`, 本家README | **英語のまま未翻訳**（本家の設計参照ドキュメント） |
-| `.gitignore`, `pyproject.toml`, `uv.lock`, `.python-version` | モデル非依存のため本家まま |
+| `PIPELINE.md` | **英語のまま未翻訳**。自動化の全体仕様（[Phase 4 からリンク](#phase-4-export)） |
+| `WORKFLOW.md` | **英語のまま未翻訳**。人間が手動で全工程を回す段取り（[人間が使う場合](#人間が使う場合)からリンク） |
+| [`CRAFT.md`](CRAFT.md) | **英語のまま未翻訳**。プロット・キャラクター・文体の作り方（教育資料）。`AUTONOVEL_REPO` 配下を読みます |
+| [`ANTI-SLOP.md`](ANTI-SLOP.md) | **英語のまま未翻訳**。AI 臭い語の検出（語単位）。採点・改訂が読みます |
+| [`ANTI-PATTERNS.md`](ANTI-PATTERNS.md) | **英語のまま未翻訳**。AI 臭い構造の検出（話者帰属・説明台詞など）。採点・改訂が読みます |
+| [`program.md`](program.md) | **英語のまま未翻訳**。フェーズごとのエージェント指示書 |
+| `MYSTERY.md` | **英語のまま未翻訳**（ミステリ専用のガードレール。この日本語版では参照のみ） |
+| [.gitignore](.gitignore), [`pyproject.toml`](pyproject.toml), `uv.lock`, `.python-version` | モデル非依存のため本家まま |
+
+> **読める日本語のドキュメントは [README.md](README.md) だけです。**
+> 上記6ファイル（`PIPELINE.md` / `WORKFLOW.md` / `CRAFT.md` / `ANTI-SLOP.md` / `ANTI-PATTERNS.md` / `program.md`）は
+> **本家（英語版）のまま未翻訳**です。動作には影響しません（採点・改訂はファイルの中身を読むので言語を問いません）が、
+> 設計を知りたいときは日本語の README を見るか、翻訳が必要です。
+>
+> **日本語で書かれているガイド**（こちらが文体の正本）:
+> [`voice.md`](voice.md)（文体のガードレール＝Part 1 と、作品ごとに発見した声＝Part 2）／
+> [`style_exemplar.md`](style_exemplar.md)（文体アンカー。承認章の良い部分を貼って全章に注入）／
+> [`canon.md`](canon.md)（設定の正本）／ [`world.md`](world.md)・[`characters.md`](characters.md)・[`outline.md`](outline.md)（作品の設計。新規生成される）
 
 > 動作実績があるのは **seed → foundation → drafting → evaluate/adversarial → revision → 読者パネル → 組版** までです。
 > 読者パネル（`panel_one_question.py`）は実測 2026-10-14 に作り直し版17章すべてを測定し、
@@ -317,31 +333,36 @@ seed.txt → 世界観・キャラクター・24章アウトライン・声・�
 ## File Structure
 
 ```
-FRAMEWORK (reusable):
-  llm.py                 — OpenAI-compatible LLM client (4 roles, per-role env vars)
-  program.md             — Agent instructions per phase
-  CRAFT.md               — Craft education (plot, character, world, prose)
-  ANTI-SLOP.md           — Word-level AI tell detection
-  ANTI-PATTERNS.md       — Structural AI pattern detection
-  PIPELINE.md            — Full automation specification
-  WORKFLOW.md            — Step-by-step human guide
+フレームワーク（使い回し。作品が変わっても同じ）:
+  llm.py                 — OpenAI互換のLLMクライアント（writer/revision/judge/review の4役割・役割ごとにモデルを変えられる）
+  export_docx.py         — 原稿を Word の .docx に出す（# → 「見出し1」。ナビゲーション・目次つき）
+  build_tex.py           — LaTeX 組版（typeset/*.tex。tectonic があれば novel.pdf）
   verify_chapter_gates.py — 章ゲート6項目（run_pipeline の drafting が呼ぶ。FAIL→破棄・書き直し）
   dialogue_ratio.py      — 章の計測（文字ベースのセリフ比・重複文・台詞長）
+  program.md             — フェーズごとのエージェント指示書【英語・未翻訳】
+  CRAFT.md               — プロット・キャラクター・文体の作り方（教育資料）【英語・未翻訳】
+  ANTI-SLOP.md           — AI臭い語の検出（語単位）【英語・未翻訳】
+  ANTI-PATTERNS.md       — AI臭い構造の検出（話者帰属・説明台詞など）【英語・未翻訳】
+  PIPELINE.md            — 自動化の全体仕様【英語・未翻訳】
+  WORKFLOW.md            — 人間が手動で全工程を回す段取り【英語・未翻訳】
+  MYSTERY.md             — ミステリ専用のガードレール（この版では参照のみ）【英語・未翻訳】
 
-PER-NOVEL (regenerated from seed.txt):
+  → 日本語で読めるのは README.md だけ。上記6ファイルは本家（英語版）のまま。
+    動作には影響なし（採点・改訂は中身を読むので言語を問わない）。
+
+作品ごと（seed.txt から作り直される）:
   seed.txt               — 種コンセプト（唯一の入力。書式の見本を兼ねる。seed.py の出力を貼る）
-  voice.md               — Part 1: guardrails. Part 2: discovered per novel
-  world.md / characters.md / outline.md / canon.md / MYSTERY.md
-  style_exemplar.md      — 文体アンカー（承認章の良い部分を貼り、全章に注入）
-  state.json             — Pipeline state tracker
-  chapters/ch_NN.md      — THE ACTUAL PROSE
+  voice.md               — Part 1: ガードレール（日本語）／ Part 2: 作品ごとに発見した声
+  style_exemplar.md      — 文体アンカー（日本語。承認章の良い部分を貼り、全章に注入）
+  world.md / characters.md / outline.md / canon.md
+  state.json             — パイプラインの進み具合（フェーズ・章数・スコア）
+  chapters/ch_NN.md      — 本文そのもの（第1章・第2章…）
 
-TYPESETTING / ART / CONFIG:
-  typeset/               — LaTeX + ePub scaffolding
-  export_docx.py         — md 原稿 → Word .docx（見出し・目次つき）
-  landing/               — Landing page template
-  .env.example           — endpoint/model config (OpenAI-compatible)
-  pyproject.toml         — Python dependencies
+組版・表紙・設定:
+  typeset/               — LaTeX のテンプレと雛形（build_tex.py が使う）
+  landing/               — ランディングページのテンプレ（本家のまま）
+  .env.example           — エンドポイントとモデルの設定例（OpenAI互換なら何でも）
+  pyproject.toml         — Python の依存関係
 ```
 
 ### 完成形（export が出すもの）
