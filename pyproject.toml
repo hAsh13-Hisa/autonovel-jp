@@ -10,4 +10,8 @@ dependencies = [
     # 実測 2026-10-14: 依存に無く venv にも入っていなかったため、この3本が
     # ModuleNotFoundError: No module named 'PIL' で動かなかった。
     "pillow>=10.0.0",
+    # 原稿の docx 化（export_docx.py）に必要。md の # 見出しを Word の
+    # 「見出し1」スタイルにするので、目次・ナビゲーションが使える。
+    # 実測 2026-10-15: 依存に無く venv にも入っていなかった。
+    "python-docx>=1.1.0",
 ]

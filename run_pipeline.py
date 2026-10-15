@@ -1761,6 +1761,18 @@ def run_export(state: dict) -> dict:
     else:
         step("WARNING: no chapter files found for manuscript")
 
+    # 3.5 同じ原稿を Word の .docx にもする（編集・校了は Word でやることが多い）
+    #     md の # 見出し → Word の「見出し1」なので、ナビゲーション窓と
+    #     目次（F9 で更新）がそのまま使える。外部サービスは不要（python-docx のみ）。
+    export_docx = BASE_DIR / "export_docx.py"
+    if export_docx.exists():
+        step("Building .docx (Word 用・見出しつき)...")
+        r = uv_run("export_docx.py --with-toc", timeout=300)
+        if r is not None and getattr(r, "returncode", 0) != 0:
+            step("WARNING: docx export failed (md は残っている)")
+    else:
+        step("export_docx.py not found, skipping docx")
+
     # 4. Build LaTeX
     build_tex = BASE_DIR / "typeset" / "build_tex.py"
     if build_tex.exists():

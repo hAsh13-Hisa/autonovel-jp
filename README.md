@@ -274,10 +274,22 @@ PER-NOVEL (regenerated from seed.txt):
 
 TYPESETTING / ART / CONFIG:
   typeset/               — LaTeX + ePub scaffolding
+  export_docx.py         — md 原稿 → Word .docx（見出し・目次つき）
   landing/               — Landing page template
   .env.example           — endpoint/model config (OpenAI-compatible)
   pyproject.toml         — Python dependencies
 ```
+
+### 完成形（export が出すもの）
+
+| ファイル | 用途 |
+|---|---|
+| `manuscript.md` | **原稿の正本**（章を全部つないだ Markdown） |
+| `manuscript.docx`（`出版/<題名>.docx`） | Word 用。`#` → 「見出し1」なのでナビゲーション窓と目次（F9 で更新）が使える。編集・校了はこちら |
+| `outline.md` / `arc_summary.md` | あらすじ（章から作り直し） |
+| `typeset/*.tex` → `typeset/novel.pdf` | 印刷用の組版（`tectonic` が入っていれば） |
+
+ePub（Kindle で売る本）は**このパイプラインの外**。`japanese-vertical-ebook` スキルの工程で別に作る。
 
 ---
 
