@@ -112,7 +112,7 @@ TELLING_PATTERNS = [
 # Japanese fiction AI tells -- concrete, sensory clichés that recur in
 # machine prose (over-used "reaction" beats and stock simile scaffolds).
 FICTION_AI_TELLS_JA = [
-    r"目を(?:見開|見張|開け)[いこだ]",
+    r"目を(?:見開|見張|開け)[きいこだ]",
     r"目が(?:見開|開い)",
     r"息を(?:呑|飲み|の|呑み込み)",
     r"息が(?:詰ま|止ま|乱れ)",
