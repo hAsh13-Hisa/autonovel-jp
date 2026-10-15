@@ -134,15 +134,29 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 | `MYSTERY.md` | **英語のまま未翻訳**（ミステリ専用のガードレール。この日本語版では参照のみ） |
 | [.gitignore](.gitignore), [`pyproject.toml`](pyproject.toml), `uv.lock`, `.python-version` | モデル非依存のため本家まま |
 
-> **読める日本語のドキュメントは [README.md](README.md) だけです。**
-> 上記6ファイル（`PIPELINE.md` / `WORKFLOW.md` / `CRAFT.md` / `ANTI-SLOP.md` / `ANTI-PATTERNS.md` / `program.md`）は
-> **本家（英語版）のまま未翻訳**です。動作には影響しません（採点・改訂はファイルの中身を読むので言語を問いません）が、
+> **日本語で読めるのは [README.md](README.md)・[`voice.md`](voice.md)・[`style_exemplar.md`](style_exemplar.md) の3件だけです**（実測の日本語率: README 62% / voice 79% / style_exemplar 92%）。
+> それ以外は**中身が英語**です（先頭の見出しだけ日本語のものもあるが、実質英語）。
+> 動作には影響しません（採点・改訂はファイルの中身を読むので言語を問いません）が、
 > 設計を知りたいときは日本語の README を見るか、翻訳が必要です。
 >
-> **日本語で書かれているガイド**（こちらが文体の正本）:
+> **英語の資料は2種類に分かれます:**
+>
+> **A. 読み物の教科書・仕様書（設計を知るため。7件・全て英語）**
+> [`PIPELINE.md`](PIPELINE.md)（パイプライン全体の仕様書）／
+> [`WORKFLOW.md`](WORKFLOW.md)（人間が手動で回す手順書）／
+> [`CRAFT.md`](CRAFT.md)（小説の書き方の教科書＝Save the Cat ビート表など）／
+> [`ANTI-SLOP.md`](ANTI-SLOP.md)（AI臭い**語**の図鑑）／
+> [`ANTI-PATTERNS.md`](ANTI-PATTERNS.md)（AI臭い**構造**の図鑑）／
+> [`program.md`](program.md)（エージェントへの指示書・5層の構造）／
+> `MYSTERY.md`（ミステリ専用ガードレール・参照のみ）
+>
+> **B. 作品の設計図（データの入れ物。作品ごとに作り直される）**
+> [`canon.md`](canon.md)（設定の正本）／ [`world.md`](world.md)（世界観）／
+> [`characters.md`](characters.md)（キャラクター）／ [`outline.md`](outline.md)（あらすじの骨格）
+>
+> **日本語のガイド（こちらが文体の正本）:**
 > [`voice.md`](voice.md)（文体のガードレール＝Part 1 と、作品ごとに発見した声＝Part 2）／
-> [`style_exemplar.md`](style_exemplar.md)（文体アンカー。承認章の良い部分を貼って全章に注入）／
-> [`canon.md`](canon.md)（設定の正本）／ [`world.md`](world.md)・[`characters.md`](characters.md)・[`outline.md`](outline.md)（作品の設計。新規生成される）
+> [`style_exemplar.md`](style_exemplar.md)（文体アンカー。承認章の良い部分を貼って全章に注入）
 
 > 動作実績があるのは **seed → foundation → drafting → evaluate/adversarial → revision → 読者パネル → 組版** までです。
 > 読者パネル（`panel_one_question.py`）は実測 2026-10-14 に作り直し版17章すべてを測定し、
@@ -347,14 +361,19 @@ seed.txt → 世界観・キャラクター・24章アウトライン・声・�
   WORKFLOW.md            — 人間が手動で全工程を回す段取り【英語・未翻訳】
   MYSTERY.md             — ミステリ専用のガードレール（この版では参照のみ）【英語・未翻訳】
 
-  → 日本語で読めるのは README.md だけ。上記6ファイルは本家（英語版）のまま。
-    動作には影響なし（採点・改訂は中身を読むので言語を問わない）。
+  → 日本語で読めるのは README.md / voice.md / style_exemplar.md の3件。
+    上記7ファイル（program.md・CRAFT.md・ANTI-SLOP.md・ANTI-PATTERNS.md・
+    PIPELINE.md・WORKFLOW.md・MYSTERY.md）は本家（英語版）のまま。
+    動作に影響なし（採点・改訂は中身を読むので言語を問わない）。
 
-作品ごと（seed.txt から作り直される）:
+作品ごと（seed.txt から作り直される。テンプレートは全て英語）:
   seed.txt               — 種コンセプト（唯一の入力。書式の見本を兼ねる。seed.py の出力を貼る）
   voice.md               — Part 1: ガードレール（日本語）／ Part 2: 作品ごとに発見した声
   style_exemplar.md      — 文体アンカー（日本語。承認章の良い部分を貼り、全章に注入）
-  world.md / characters.md / outline.md / canon.md
+  canon.md               — 設定の正本（英語テンプレート）
+  world.md               — 世界観の設計図（英語テンプレート）
+  characters.md          — キャラクター設計（英語テンプレート）
+  outline.md             — あらすじの骨格（英語テンプレート）
   state.json             — パイプラインの進み具合（フェーズ・章数・スコア）
   chapters/ch_NN.md      — 本文そのもの（第1章・第2章…）
 
