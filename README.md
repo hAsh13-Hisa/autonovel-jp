@@ -12,7 +12,11 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 セットアップから執筆ループまで任せられます:
 
 1. **「このリポジトリをcloneして、autonovelパイプラインをセットアップして」**
-   → クローン、`uv sync`、`.env` 雛形作成までエージェントが実行します
+   → クローン、`.venv` 作成（`uv venv && uv pip install -e .`）、`.env` 雛形作成までエージェントが実行します。
+   **注意: `uv run` / `uv sync` は使いません。** 本家（Anthropic 直叩き版）の名残で、
+   この日本語版では依存パッケージ（dotenv / httpx）が入らない別環境を作って
+   `ModuleNotFoundError` で落ちます（実測 2026-10-13）。
+   必ず **`.venv/bin/python` を直接**呼んでください（詳細は [Quick Start](#quick-start)）
 2. **「種コンセプトを一緒に考えたい」**
    → `seed.py`（ゼロから10案）または `seed.py --riff "<雑な着想>"`（着想を5案に展開）をエージェントが実行し、
    選んだ案を `seed.txt` に書き込みます（書式の正本は `seed.txt`）
@@ -134,20 +138,71 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 
 ## Quick Start
 
+> ⚠️ **`uv run` / `uv sync` は使わないでください。** 本家（Anthropic API 直叩き版）の名残で、
+> この日本語版では依存パッケージ（dotenv / httpx）が入らない別環境を作って
+> `ModuleNotFoundError: No module named 'dotenv'` で落ちます（実測 2026-10-13）。
+> 必ず **`.venv/bin/python` を直接**呼んでください。
+
 ```bash
 git clone <repo-url> && cd autonovel
-cp .env.example .env    # エンドポイントとモデルを編集
 
-uv sync
+# 1. 仮想環境を作る（初回だけ。.venv/bin/python ができる）
+uv venv && uv pip install -e .
 
-# 種コンセプトを作る（既定ルート。出力をそのまま seed.txt に貼る）
-uv run python seed.py
+# 2. エンドポイントとモデルを設定
+cp .env.example .env    # 編集する
+
+# 3. 種コンセプトを作る（既定ルート。出力をそのまま seed.txt に貼る）
+.venv/bin/python seed.py
 # すでに着想がある場合は、それを展開させる
-uv run python seed.py --riff "平安の才媛が鏡の世界へ行く話"
+.venv/bin/python seed.py --riff "平安の才媛が鏡の世界へ行く話"
 
-# パイプライン実行
-uv run python run_pipeline.py --from-scratch
+# 4. パイプライン実行
+.venv/bin/python run_pipeline.py --from-scratch
 ```
+
+### よく使う操作
+
+```bash
+# パイプラインを最初から（state.json をリセットして seed.txt から）
+.venv/bin/python run_pipeline.py --from-scratch
+
+# 指定フェーズだけ回す（foundation / drafting / revision / export）
+.venv/bin/python run_pipeline.py --phase revision
+
+# 改訂の周回数だけ変えて回す
+.venv/bin/python run_pipeline.py --phase revision --max-cycles 8
+
+# 原稿を Word にも出す（見出し・目次つき）
+.venv/bin/python export_docx.py --with-toc
+#   → 出版/<題名>.docx ができる。題名は seed.txt の「題名:」から取る
+
+# 章ゲートだけ単独で確認する
+.venv/bin/python verify_chapter_gates.py
+```
+
+進み具合は `state.json` を見てください（フェーズ・章数・スコアが入っています）。
+
+### 作り直し（リライト）の作業では
+
+スクリプト一式を作業用ディレクトリへコピーして動かす運用です。
+そのまま実行すると**リポジトリ側の古い設定**（別の作品の `outline.md` 等）を
+読んでしまうので、環境変数で2つ渡します:
+
+```bash
+cp -r /path/to/autonovel /path/to/作業用コピー
+cd /path/to/作業用コピー
+# chapters/ と seed.txt を作業用コピー側に置いてから:
+
+export AUTONOVEL_REPO=/path/to/autonovel                    # 共有ガイド（CRAFT.md 等）の場所
+export AUTONOVEL_PYTHON=/path/to/autonovel/.venv/bin/python # 依存の入ったインタプリタ
+
+.venv/bin/python run_pipeline.py --phase revision
+```
+
+`AUTONOVEL_REPO` を渡さないと共有ガイドが読めず、
+`AUTONOVEL_PYTHON` を渡さないとシステム python3 に落ちて `ModuleNotFoundError` になります
+（どちらも実測 2026-10-13 で発生）。
 
 ### .env 設定例
 
@@ -188,7 +243,16 @@ seed.txt → 世界観・キャラクター・24章アウトライン・声・�
 小説教授の二重ペルソナでレビュー。指摘を修正し、指摘が尽きるまで反復。
 
 ### Phase 4: Export
-LaTeX組版、表紙アート、オーディオブック台本、ePub、ランディングページ生成。
+章を結合して `manuscript.md`（原稿の正本）を作り、続けて:
+
+- **`export_docx.py`** → `出版/<題名>.docx`（Word 用。`#` → 「見出し1」なので
+  ナビゲーション窓と目次が使える。編集・校了はこちら）
+- `build_tex.py` → `typeset/*.tex`、`tectonic` があれば `novel.pdf`（印刷用）
+
+**ePub（Kindle で売る本）はこのパイプラインの外**です。
+`japanese-vertical-ebook` スキルの工程で別に作ってください。
+表紙アート（`gen_art.py` ほか）とオーディオブック（ElevenLabs）は
+この日本語版では未検証です。
 
 詳細は [PIPELINE.md](PIPELINE.md)。
 

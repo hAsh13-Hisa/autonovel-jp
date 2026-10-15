@@ -2,9 +2,10 @@ eval_logs/
 edit_logs/
 briefs/
 __pycache__/
+*.egg-info/
 *.pyc
-.env
 .venv/
+.env
 typeset/*.pdf
 typeset/chapters_content.tex
 *.pdf

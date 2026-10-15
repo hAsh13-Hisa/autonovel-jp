@@ -15,3 +15,14 @@ dependencies = [
     # 実測 2026-10-15: 依存に無く venv にも入っていなかった。
     "python-docx>=1.1.0",
 ]
+
+# このリポジトリは**インストールして使うライブラリではなく、venv に乗せる
+# スクリプト集**（各 .py を .venv/bin/python で直接呼ぶ）。
+# なぜ py-packages を明示するか（実測 2026-10-15）: 何も指定しないと
+# setuptools がリポジトリ内の briefs/ typeset/ landing/ chapters/
+# audiobook/ eval_logs/ edit_logs/ を**パッケージと誤認**して
+# 「multiple top-level packages discovered」でビルドが失敗する。
+# → `uv pip install -e .`（セットアップの手順）が通らない。
+# 空リストにすることで「パッケージは作らない、依存だけ入れる」動きになる。
+[tool.setuptools]
+py-modules = []
