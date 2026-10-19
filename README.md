@@ -471,6 +471,7 @@ EPUB は作品の情報をコードに持たず、**作品フォルダの `出�
   本家のコード・ドキュメントの権利は **© Nous Research** および各コントリビューターに帰属します。
 - 本家には LICENSE ファイルが付与されていないため、コード部分は GitHub の利用規約に基づく
   フォーク/派生物として取り扱います。著作権表示を削除しないでください。
+- この派生版の追加実装には [LICENSE](LICENSE)（MIT）を適用します。上流由来のコードには適用されません。
 - 日本語化・品質ゲート等の**この版の追加実装**（`llm.py`、`draft_chapter_beat.py`、
   `draft_chapter_single.py`、`draft_chapter_split.py`、各品質ゲート、日本語プロンプト）は
   Hisa ([@hAsh13-Hisa](https://github.com/hAsh13-Hisa)) によるものです。
