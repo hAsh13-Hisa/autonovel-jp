@@ -19,11 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-このリポジトリは NousResearch/autonovel の派生版です。上流由来のコードの権利は
-© Nous Research および各コントリビューターに帰属し、上流には LICENSE ファイルが
-ありません（詳細は README の "Upstream & License Notice" を参照）。
-上記 MIT ライセンスは、この派生版で追加・改変した部分（llm.py、各品質ゲート、
-build_epub.py、日本語プロンプト等）に適用されます。

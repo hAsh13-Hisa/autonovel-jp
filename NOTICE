@@ -1,0 +1,12 @@
+autonovel ― 日本語ライトノベル版 (JP Edition)
+================================================
+
+このリポジトリは NousResearch/autonovel の派生版です。
+
+- 上流由来のコードの著作権は © Nous Research および各コントリビューターに帰属します。
+  上流リポジトリには LICENSE ファイルが付与されていません。
+- LICENSE（MIT）は、この派生版で追加・改変した部分に適用されます:
+  llm.py（OpenAI互換クライアント・役割別モデル・再試行・消費量記録）、
+  各品質ゲート（verify_chapter_gates.py / dialogue_ratio.py / verify_consistency.py ほか）、
+  build_epub.py（縦書きEPUB）、export_docx.py、日本語プロンプト一式。
+- 上流由来のコードには MIT ライセンスを適用しません。
