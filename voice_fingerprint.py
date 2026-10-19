@@ -12,7 +12,6 @@ from pathlib import Path
 from collections import Counter
 
 BASE_DIR = Path(__file__).parent
-CHAPTERS_DIR = BASE_DIR / "chapters"
 
 def repo_dir() -> Path:
     """autonovel-jp のリポジトリ本体（共有ガイドの置き場所）。
@@ -34,7 +33,7 @@ def project_dir() -> Path:
     """作品ファイル（seed.txt / world.md / characters.md / outline.md 等）の場所。
 
     なぜ BASE_DIR をそのまま使わないか（実測 2026-10-14）: 作り直しの作業は
-    コピー先（/opt/data/cache/scratch/final 等）で行う。BASE_DIR は
+    コピー先（作業用のコピー先）で行う。BASE_DIR は
     Path(__file__).parent＝自分が置かれた場所で固定なので、作り直し版の設定を
     読み書きできず、正典 canon.md が 10/8 の古いまま残っていた
     （一人称「俺」の指定が正典に入らない）。
@@ -46,6 +45,11 @@ def project_dir() -> Path:
             or (here / "outline.md").exists():
         return here
     return BASE_DIR
+
+
+# 章の置き場所（2026-10-19: BASE_DIR 固定だったため、別ディレクトリの原稿に
+# 当てると「No chapters found」になっていた。project_dir() と同じ規則にする）
+CHAPTERS_DIR = project_dir() / "chapters"
 
 
 def read_project_file(name: str) -> str:
@@ -187,7 +191,7 @@ def analyze_chapter(path):
         "paragraph_count": len(paragraphs),
         "avg_sentence_length": round(statistics.mean(sent_lengths), 1) if sent_lengths else 0,
         "sentence_length_std": round(statistics.stdev(sent_lengths), 1) if len(sent_lengths) > 1 else 0,
-        "sentence_length_cv": round(statistics.stdev(sent_lengths) / statistics.mean(sent_lengths), 3) if sent_lengths and statistics.mean(sent_lengths) > 0 else 0,
+        "sentence_length_cv": round(statistics.stdev(sent_lengths) / statistics.mean(sent_lengths), 3) if len(sent_lengths) >= 2 and statistics.mean(sent_lengths) > 0 else 0,
         "min_sentence": min(sent_lengths) if sent_lengths else 0,
         "max_sentence": max(sent_lengths) if sent_lengths else 0,
         "fragments_pct": round(fragments / len(sentences) * 100, 1) if sentences else 0,
@@ -209,10 +213,11 @@ def analyze_chapter(path):
 
 def main():
     results = {}
-    for ch in range(1, 25):
-        path = CHAPTERS_DIR / f"ch_{ch:02d}.md"
-        if path.exists():
-            results[f"ch_{ch:02d}"] = analyze_chapter(path)
+    # 2026-10-19: 章数を range(1, 25) で固定していたため、第25章以降が黙って
+    # 集計から外れていた（25章の作品でも最後の1章が無視される）。chapters/ に
+    # ある章ファイルを全部拾う。
+    for path in sorted(CHAPTERS_DIR.glob("ch_*.md")):
+        results[path.stem] = analyze_chapter(path)
     
     # Compute novel-wide averages
     all_vals = list(results.values())
@@ -249,8 +254,8 @@ def main():
     print("VOICE FINGERPRINT")
     print("=" * 70)
     print(f"{'Ch':<8} {'Words':<7} {'AvgSnt':<7} {'CV':<6} {'Frag%':<7} {'Long%':<7} {'Dial%':<7} {'Mus%':<6} {'Trd%':<6} {'Bod%':<6} {'AbsPK':<6} {'HeStrt':<7}")
-    for ch in range(1, 25):
-        key = f"ch_{ch:02d}"
+    for key in sorted(k for k in results if k.startswith("ch_")):
+        ch = key.replace("ch_", "")
         r = results[key]
         print(f"  {ch:<6} {r['word_count']:<7} {r['avg_sentence_length']:<7} {r['sentence_length_cv']:<6} {r['fragments_pct']:<7} {r['long_sentences_pct']:<7} {r['dialogue_ratio']:<7} {r['well_musical_pct']:<6} {r['well_trade_pct']:<6} {r['well_body_pct']:<6} {r['abstract_per_1k']:<6} {r['he_start_pct']:<7}")
     

@@ -11,6 +11,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).parent
+# 章数（2026-10-19: 24を直書きしていた。env `AUTONOVEL_CHAPTERS` から取る。既定24）
+N_CHAPTERS = int(os.environ.get("AUTONOVEL_CHAPTERS", "24"))
+HALF = N_CHAPTERS // 2
 # .env はカレント（＝作り直し版のコピー先）を優先し、無ければリポジトリ側。
 # なぜ: 作り直しの作業はコピー先で行うので、エンドポイントの設定も
 # コピー先の .env を使うべき。リポジトリ側の .env は git 管理外で
@@ -38,7 +41,7 @@ def project_dir() -> Path:
     """作品ファイル（seed.txt / world.md / characters.md / outline.md 等）の場所。
 
     なぜ BASE_DIR をそのまま使わないか（実測 2026-10-14）: 作り直しの作業は
-    コピー先（/opt/data/cache/scratch/final 等）で行う。BASE_DIR は
+    コピー先（作業用のコピー先）で行う。BASE_DIR は
     Path(__file__).parent＝自分が置かれた場所で固定なので、作り直し版の設定を
     読み書きできず、正典 canon.md が 10/8 の古いまま残っていた
     （一人称「俺」の指定が正典に入らない）。
@@ -172,8 +175,8 @@ def main() -> None:
         sys.exit(1)
     part1 = part1_path.read_text()
 
-    prompt = f"""このファンタジー小説の章アウトラインの後半（第13章〜第24章）と伏線台帳を構築してください。
-前半（第1章〜第12章）はすでにあります。同じ形式で続けてください。
+    prompt = f"""このファンタジー小説の章アウトラインの後半（第{HALF+1}章〜第{N_CHAPTERS}章）と伏線台帳を構築してください。
+前半（第1章〜第{HALF}章）はすでにあります。同じ形式で続けてください。
 
 SEED CONCEPT（種コンセプト）：
 {seed}
@@ -187,12 +190,12 @@ WORLD BIBLE（世界バイブル）：
 CHARACTER REGISTRY（キャラクター登録簿）：
 {characters}
 
-これまでのアウトライン（第1章〜第12章）：
+これまでのアウトライン（第1章〜第{HALF}章）：
 {part1}
 
 必要な残りの構造：
 
-## 章ごとのアウトライン（第13章〜第24章）
+## 章ごとのアウトライン（第{HALF+1}章〜第{N_CHAPTERS}章）
 
 各章で提供すること（前半と同じ形式）：
 ### 第N章：[タイトル]
@@ -237,7 +240,7 @@ CHARACTER REGISTRY（キャラクター登録簿）：
 少なくとも15本の糸を含める。種類：物体、台詞、行動、象徴的、構造的。
 植え込みから回収までの距離は少なくとも3章あること。
 
-出力はすべて日本語で書いてください。第13章〜第24章と伏線台帳まで、完全に書いてください。
+出力はすべて日本語で書いてください。第{HALF+1}章〜第{N_CHAPTERS}章と伏線台帳まで、完全に書いてください。
 """
     print("Calling writer model...", file=sys.stderr)
     result = call_writer(prompt)

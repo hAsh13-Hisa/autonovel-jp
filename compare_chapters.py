@@ -36,7 +36,7 @@ def chapters_dir() -> Path:
     """章ファイルのある場所。
 
     なぜ既定の BASE_DIR をやめたか（実測 2026-10-14）: 作業はコピー先
-    （/opt/data/cache/scratch/final 等）で行うので、autonovel-jp/chapters/ は
+    （作業用のコピー先）で行うので、autonovel-jp/chapters/ は
     空のことが多い。BASE_DIR 固定だと「存在しない章を数えて全章 Elo 1500」
     という空の結果を出す（1回も比較していないのに順位表ができあがる）。
     → カレントの chapters/ を優先し、無いときだけ BASE_DIR を使う。

@@ -251,7 +251,7 @@ def slop_score(text):
     # An AI tell: many paragraphs where text is broken into MANY short
     # fragments by 読点 (、) and 句点 (。), producing a mechanical staccato
     # rhythm with no contrast. This differs from DELIBERATE short-sentence
-    # emphasis (e.g. at an emotional peak per the 過去作 style guide),
+    # emphasis (e.g. at an emotional peak per the work's style guide),
     # which is localized to 1-2 paragraphs.
     # We detect: >= MONOTONE_THRESHOLD consecutive prose paragraphs that
     # each consist of >= MONOTONE_MIN_FRAG fragments where the MAJORITY

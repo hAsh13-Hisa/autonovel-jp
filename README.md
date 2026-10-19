@@ -39,7 +39,7 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 >   - 章の文字数ゲート、`——`/`……`の使用上限、読点スタッカート検出、定型AI表現の減点
 >   - `style_exemplar.md`（文体アンカー）を毎章のプロンプトに注入して文体ドリフトを防止
 >   - 比喩の型の反復を測る（比喩密度 ≤3.0/1000字・まるで+みたい ≤4。閾値は採用版の実測から逆算）
->   - **`verify_chapter_gates.py`（章ゲート6項目）を `run_pipeline.py` の drafting が呼び、
+>   - **`verify_chapter_gates.py`（章ゲート10項目）を `run_pipeline.py` の drafting が呼び、
 >     FAIL の章は自動で破棄して書き直す**。判定は「破棄条件」と「記録のみ」に分かれます:
 >     破棄＝**文字数・重複・記号・比喩の型**／記録のみ＝**セリフ比・最小窓**（完成稿の物差しなので
 >     生原稿は落ちるのが普通）→ env `AUTONOVEL_GATE_WARN_ITEMS` で切替（手動の完成稿検査は未指定＝全項目合否）
@@ -59,7 +59,7 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 >     `glm-5.3` は出力が壊れる（2回連続）。**同じ章でも実行ごとに点が最大1点動く**ので1回の比較で決めない。
 >     env `AUTONOVEL_JUDGE_MODEL`（推奨 `kimi-k3`）／`AUTONOVEL_REVIEW_MODEL`
 >   - **本文を触ったら全ゲート**：改訂フェーズ（`adversarial_edit.py` / `apply_cuts.py` / `gen_revision.py`）が章を書き換えた
->     **直後**に、同じ章ゲート6項目を必ず通します。落ちた章は**元に戻し**（git checkout）、`gen_revision.py` の改訂は
+>     **直後**に、同じ章ゲート10項目を必ず通します。落ちた章は**元に戻し**（git checkout）、`gen_revision.py` の改訂は
 >     **修復→それでも通らなければ元に戻す**ので、改訂で文体が崩れたまま残ることがありません。
 >     env `AUTONOVEL_REVISION_GATES=0` で無効化（既定は有効）
 >   - **全編の目標字数（`AUTONOVEL_TARGET_WORDS`）**：作り直しで全体が薄まりすぎていないかを見ます。
@@ -77,7 +77,7 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 >     改訂ブリーフに自動で足されます（人間が読まなくても、次の改訂で直る）。
 >     `--only unused_setting` で「設定に書いたのに本文で使われていない語」も出せます（全体を見る材料）。
 >     env `AUTONOVEL_CONSISTENCY=0` で無効化
->   - **章ゲートは7項目**：文字数／セリフ比／最小窓／重複／記号・英語／比喩の型／**括弧の対応（「」『』（）の過不足=0）**。
+>   - **章ゲートは10項目**：文字数／セリフ比／最小窓／重複／記号・英語／文頭の読点・連続句読点／比喩密度／**括弧の対応（「」『』（）の過不足=0）**／**空の台詞「」**／**同じ行が2回以上（12字以上）**。
 >     括弧は修復パスが「」を閉じ忘れる事故を実測で見つけたため追加しました（完成稿24章では ずれ0/24＝誤検出なし）。
 >   - **一対比較（Elo）で章の採用を決める**：絶対点は実行ごとに最大1点動くので、「点が下がったから捨てる」と
 >     良い改訂を捨てます。点が下がったときは旧版と新版を**両方の順序で**審査にかけ、両方で新版が勝ったときだけ採用します。
@@ -124,6 +124,7 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 | `main.py` | 本家由来の stub（Hello World）のまま |
 | `draft_chapter_beat.py`（本家の既定ドラフター） | 本家まま・**既定からは外れました**。`run_pipeline.py` の drafting は fork 推奨の `draft_chapter_split.py` を呼びます（戻すなら env `AUTONOVEL_DRAFTER=draft_chapter_beat.py`） |
 | `draft_chapter.py` / `draft_chapter_beat.py` / `draft_chapter_one.py` / `draft_chapter_single.py` / `run_drafts.py` | **本家まま・使わないこと**。単発または一括のドラフター。実測 2026-10-14: `draft_chapter_single.py 1` は動くが、**作り直し版の設定を読まず**リポジトリ側の古い設定（別の章タイトル・世界観）で1章を書き直してしまった（`BASE_DIR` 固定）。`.env` だけは直したが、`outline.md` / `world.md` / `characters.md` の探索は未対応。**既定の `draft_chapter_split.py` を使う限り動かない**ので、使う場合は同じ `project_dir()` 対応が必要 |
+| `voice_fingerprint.py` | 本家由来の**英語メトリクス**（語数・英文の文長）。日本語原稿では数字が意味を持たない（実測 2026-10-19: 約4,400字の章が「148語」）。章数固定（`range(1,25)`）と1文の章で落ちるバグは修正済み |
 | `quota_guard.py` | **未使用**（429 連続で停止マーカーを置く機能は `llm.py` に内蔵済み。実測 2026-10-14: どのスクリプトも import していない） |
 | `PIPELINE.md` | **英語のまま未翻訳**。自動化の全体仕様（[Phase 4 からリンク](#phase-4-export)） |
 | `WORKFLOW.md` | **英語のまま未翻訳**。人間が手動で全工程を回す段取り（[人間が使う場合](#人間が使う場合)からリンク） |
@@ -158,7 +159,7 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 > [`voice.md`](voice.md)（文体のガードレール＝Part 1 と、作品ごとに発見した声＝Part 2）／
 > [`style_exemplar.md`](style_exemplar.md)（文体アンカー。承認章の良い部分を貼って全章に注入）
 
-> 動作実績があるのは **seed → foundation → drafting → evaluate/adversarial → revision → 読者パネル → 組版** までです。
+> 動作実績があるのは **seed → foundation → drafting → evaluate/adversarial → revision → 読者パネル → 組版 → EPUB作成 → KDP入稿** までです（25章・約13万字の長編で実測）。
 > 読者パネル（`panel_one_question.py`）は実測 2026-10-14 に作り直し版17章すべてを測定し、
 > 平均 7.9 / 17章すべて「続きが読みたい」を確認（引用が本文と不一致は1件＝検査が効いている）。
 > Art（fal.ai）・Audiobook（ElevenLabs）の各工程は、本家設計を引き継いでいるだけで
@@ -206,6 +207,11 @@ cp .env.example .env    # 編集する
 # 原稿を Word にも出す（見出し・目次つき）
 .venv/bin/python export_docx.py --with-toc
 #   → 出版/<題名>.docx ができる。題名は seed.txt の「題名:」から取る
+#   上書きせず別名で出すなら --out / 題名を明示するなら --title
+
+# 縦書き・右開きの EPUB を作る（作品フォルダの 出版/epub.json を読む）
+.venv/bin/python build_epub.py --font /path/to/NotoSerifJP-sub.ttf
+#   → 出版/<題名>.epub。旧版は /opt/data/backups/ に退避される
 
 # 章ゲートだけ単独で確認する
 .venv/bin/python verify_chapter_gates.py
@@ -233,6 +239,53 @@ export AUTONOVEL_PYTHON=/path/to/autonovel/.venv/bin/python # 依存の入った
 `AUTONOVEL_REPO` を渡さないと共有ガイドが読めず、
 `AUTONOVEL_PYTHON` を渡さないとシステム python3 に落ちて `ModuleNotFoundError` になります
 （どちらも実測 2026-10-13 で発生）。
+
+### 縦書きEPUBを作る
+
+`build_epub.py` は**作品の情報をコードに持たない**。作品フォルダの `出版/` から読む:
+
+| 置くもの | 役割 |
+|---|---|
+| `出版/epub.json` | 題名・著者名・行間・**ルビ表**・目次に何を出すか・表紙の有無・奥付を横組みにするか |
+| `出版/あとがき.md` / `既刊案内.md` / `奥付.md` | あればページを作る（無ければ作らない）。既刊案内は `##` 見出し＋作品名の行 |
+| `出版/表紙.jpg` | `epub.json` の `"cover": true` のときだけ使う（既定は入れない） |
+| `本文/NN-第N章.md`（無ければ `chapters/ch_NN.md`） | 本文。1行目が章題、以降が段落 |
+
+```json
+{
+  "title": "作品名", "author": "著者名", "date": "2026-10",
+  "line_height": 2.0,
+  "toc": {"chapters": true, "afterword": true, "books_list": false, "colophon": false},
+  "title_ruby": {"真": "シン"},
+  "ruby": [["鬼", "らせつ"], ["獣", "けもの"]]
+}
+```
+
+```bash
+# フォントを本文の文字に絞る（初回と、原稿を書き換えたときに作り直す）
+/opt/data/.venv_epub/bin/python -m fontTools.subset NotoSerifJP-Regular.ttf \
+  --text-file=chars.txt --output-file=NotoSerifJP-sub.ttf \
+  --layout-features=vert,vrt2,kern,ccmp,locl,palt,halt,liga,calt \
+  --no-hinting --desubroutinize --drop-tables+=DSIG --recalc-bounds --name-IDs=1,2,3,4,6
+
+.venv/bin/python build_epub.py --project /path/to/作品 --font /path/to/NotoSerifJP-sub.ttf
+```
+
+**ルビの規則**
+
+- ルビは**EPUB生成時に差し込む**。原稿のmdには書かない（docx側の組みが崩れる）
+- **各章の初出1回だけ**（同一章の2回目以降は素の漢字、章が変われば再び振る）。章題に難読語があるときも振る
+- 語幹に振り、送り仮名は外に出す（「煤けた」→ 煤(すす)けた／「煮え滾る」→ 煮え滾(にえたぎ)る）
+- 複数の読みがある語（供物＝くもつ／そなえもの、藁沓＝わらじ／わらぐつ）は**本人に確認**する
+
+**検証（必ずやる）**
+
+- `epubcheck` を1回回す（`/opt/data/scripts/epubcheck.sh <file.epub>`）。CSSのフォントURLが `../fonts/…` だと `RSC-007` で落ちる
+- **本文の欠落検査**：タグと `rt`/`rp` を除去したテキストが原稿と完全一致するか
+- **グリフ網羅**：EPUB内の表示テキストの全文字がフォントの `cmap` にあるか（原稿を編集したのにフォントを作り直すのを忘れると、新しい文字が**無言で消える**）
+- **見た目**：`style.css`・`fonts/`・対象の `.xhtml` を同じ階層に取り出してブラウザで開き、スクショを撮って位置を測る（縦組みは % 余白の基準が直感と違う）
+
+**章数**は `AUTONOVEL_CHAPTERS`（既定24）。`gen_outline.py` / `gen_outline_part2.py` の前半・後半の分割もこの値から計算する。
 
 ### .env 設定例
 
@@ -277,10 +330,12 @@ seed.txt → 世界観・キャラクター・24章アウトライン・声・�
 
 - **`export_docx.py`** → `出版/<題名>.docx`（Word 用。`#` → 「見出し1」なので
   ナビゲーション窓と目次が使える。編集・校了はこちら）
+- **`build_epub.py`** → `出版/<題名>.epub`（**縦書き・右開き**。Kindle に出す本はこれ）
 - `build_tex.py` → `typeset/*.tex`、`tectonic` があれば `novel.pdf`（印刷用）
 
-**ePub（Kindle で売る本）はこのパイプラインの外**です。
-`japanese-vertical-ebook` スキルの工程で別に作ってください。
+EPUB は作品の情報をコードに持たず、**作品フォルダの `出版/epub.json`** から読む
+（著者名・行間・ルビ表・目次に何を出すか・表紙の有無）。`出版/あとがき.md`
+`既刊案内.md` `奥付.md` があれば、その分のページを自動で作る（無ければ作らない）。
 表紙アート（`gen_art.py` ほか）とオーディオブック（ElevenLabs）は
 この日本語版では未検証です。
 
@@ -324,7 +379,7 @@ seed.txt → 世界観・キャラクター・24章アウトライン・声・�
 | `reader_panel.py` | 4-persona novel-level evaluation |
 | `panel_one_question.py` | **面白さの実測器（質問は1つ）**。全章の抜粋を1回の呼び出しで渡し「続きを読みたいか」で必ず3層に分けさせる（相対評価）。絶対点0-10・一対比較は識別しないと実測済み（下記）。`--md` で人間用ブリーフ（下層＝読むべき章）、`--repeat` で多数決＋不安定章の検出、引用は本文と機械照合 |
 | `review.py` | Dual-persona review with stopping conditions |
-| `verify_chapter_gates.py` | **章ゲート6項目**（文字数／セリフ比／最小窓／重複／……・——・英語／比喩の型）。`run_pipeline.py` の drafting が呼び、FAIL の章は破棄→書き直し |
+| `verify_chapter_gates.py` | **章ゲート10項目**（文字数／セリフ比／最小窓／重複／……・——・英語／読点・連続句読点／比喩密度／括弧／空の台詞／同じ行）。`--band 3000 99999` で完成稿向けの文字数帯を指定できる。`run_pipeline.py` の drafting が呼び、FAIL の章は破棄→書き直し |
 | `dialogue_ratio.py` | 章の計測（文字ベースのセリフ比・重複文・台詞の長さ）。`verify_chapter_gates.py` が読み取る |
 | `repair_chapter.py` | **落ちた章を直す修復パス（破棄しない）**。直し方は4つ＝(1) 重複文の削除【コード】(2) 記号の整理【コード】(3) 比喩の型の言い換え【LLM】(4) 会話が薄い区画の地の文を会話に置き換え【LLM】。それぞれ良くならなければ元に戻す。元ファイルは上書きしない。`--only <種類>` で種類を選び、`--force` でゲートを通っていても実行（種類ごとの動作確認用） |
 
@@ -340,6 +395,7 @@ seed.txt → 世界観・キャラクター・24章アウトライン・声・�
 |------|---------|
 | `gen_art.py` ほか | Art pipeline, cover composite, print cover |
 | `gen_audiobook_script.py` / `gen_audiobook.py` | Multi-voice audiobook (ElevenLabs) |
+| `build_epub.py` | **縦書き・右開きの EPUB**。作品情報は `出版/epub.json` から読む（コードに作品名を書かない）。ルビは各章初出に差し込む |
 | `run_pipeline.py` | Full pipeline orchestrator (seed → finished novel) |
 
 ---
@@ -351,7 +407,8 @@ seed.txt → 世界観・キャラクター・24章アウトライン・声・�
   llm.py                 — OpenAI互換のLLMクライアント（writer/revision/judge/review の4役割・役割ごとにモデルを変えられる）
   export_docx.py         — 原稿を Word の .docx に出す（# → 「見出し1」。ナビゲーション・目次つき）
   build_tex.py           — LaTeX 組版（typeset/*.tex。tectonic があれば novel.pdf）
-  verify_chapter_gates.py — 章ゲート6項目（run_pipeline の drafting が呼ぶ。FAIL→破棄・書き直し）
+  build_epub.py          — 縦書き・右開きの EPUB（出版/epub.json を読む。ルビ・目次・奥付・任意で表紙）
+  verify_chapter_gates.py — 章ゲート10項目（run_pipeline の drafting が呼ぶ。FAIL→破棄・書き直し）
   dialogue_ratio.py      — 章の計測（文字ベースのセリフ比・重複文・台詞長）
   program.md             — フェーズごとのエージェント指示書【英語・未翻訳】
   CRAFT.md               — プロット・キャラクター・文体の作り方（教育資料）【英語・未翻訳】
@@ -392,8 +449,7 @@ seed.txt → 世界観・キャラクター・24章アウトライン・声・�
 | `manuscript.docx`（`出版/<題名>.docx`） | Word 用。`#` → 「見出し1」なのでナビゲーション窓と目次（F9 で更新）が使える。編集・校了はこちら |
 | `outline.md` / `arc_summary.md` | あらすじ（章から作り直し） |
 | `typeset/*.tex` → `typeset/novel.pdf` | 印刷用の組版（`tectonic` が入っていれば） |
-
-ePub（Kindle で売る本）は**このパイプラインの外**。`japanese-vertical-ebook` スキルの工程で別に作る。
+| `出版/<題名>.epub` | **Kindle 用の EPUB**（縦書き・右開き・ルビ・目次・奥付）。`build_epub.py` が作る |
 
 ---
 

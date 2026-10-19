@@ -36,7 +36,7 @@ def project_dir() -> Path:
     """作品ファイル（seed.txt / world.md / characters.md / outline.md 等）の場所。
 
     なぜ BASE_DIR をそのまま使わないか（実測 2026-10-14）: 作り直しの作業は
-    コピー先（/opt/data/cache/scratch/final 等）で行う。BASE_DIR は
+    コピー先（作業用のコピー先）で行う。BASE_DIR は
     Path(__file__).parent＝自分が置かれた場所で固定なので、作り直し版の設定を
     読み書きできず、正典 canon.md が 10/8 の古いまま残っていた
     （一人称「俺」の指定が正典に入らない）。
