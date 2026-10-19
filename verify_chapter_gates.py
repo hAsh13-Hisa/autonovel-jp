@@ -134,6 +134,16 @@ def main() -> int:
         # 置換や生成で壊れた記号（文頭の読点・連続句読点）。2026-10-06 実測: 「……」を
         # 「、」に置換した修復版だけに5箇所あり、素の原稿には0箇所だった。
         punct_bad = len(re.findall(r"[「『（]\s*[、。]", text)) + len(re.findall(r"[、。]{2,}", text))
+        # 2026-10-17 追加: 空の台詞（「」）は生成・修復の破損。従来この検査が無く、
+        # 第14章に2箇所あっても全項目PASSになっていた（実測）。
+        empty_quote = len(re.findall(r"「」", text))
+        # 2026-10-17 追加: 同じ行が2回以上（12字以上）。文単位の重複検査は句点で切るため、
+        # 行が同じでも前後の文が違うと拾えない（実測: 第17章の章頭と章末が同一文で素通り）。
+        _lines = [l.strip() for l in text.split("\n") if l.strip() and not l.strip().startswith("#")]
+        _c = {}
+        for _l in _lines:
+            _c[_l] = _c.get(_l, 0) + 1
+        dup_line = sum(1 for _k, _v in _c.items() if _v >= 2 and len(_k) >= 12)
 
         def emit(key: str, label: str, val: str, ok: bool) -> None:
             """1項目を出力する。warn 指定の項目は落ちても all_ok を倒さない。"""
@@ -156,6 +166,8 @@ def main() -> int:
             ("dup", "重複(12字以上x2)", f"{dup} (=0)", dup == 0),
             ("symbols", "……/——/英語", f"{dots}/{dash}/{eng} (<=2/<=1/0)",
              dots <= 2 and dash <= 1 and eng == 0),
+            ("empty_quote", "空の台詞「」", f"{empty_quote} (=0)", empty_quote == 0),
+            ("dup_line", "同じ行が2回以上(12字以上)", f"{dup_line} (=0)", dup_line == 0),
             ("punct", "文頭の読点・連続句読点", f"{punct_bad} (=0)", punct_bad == 0),
         ]:
             emit(key, label, val, ok)

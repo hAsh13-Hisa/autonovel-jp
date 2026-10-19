@@ -129,7 +129,11 @@ def min_window_ratio(text, win=500):
     そのため末尾が地の文で終わる章は**必ず 0%** になり（実測: 会話の無い最長区間が122字の
     章でも 0%）、ドラフターの章の採否も誤っていた。
     """
-    body = "\n".join(l for l in text.split("\n") if not l.strip().startswith("#")).strip()
+    # 2026-10-17 修正: 改行・空白も1文字として数えていたため、段落の空行が多い章ほど
+    # 窓が低く出ていた（本文が同じでも整形だけで数字が動く＝物差しの側の不具合）。
+    # 空白を除いた本文で測り、整形に依存しないようにする。
+    body = re.sub(r"[\r\n\t ]+", "",
+                  "\n".join(l for l in text.split("\n") if not l.strip().startswith("#")))
     vals = []
     for i in range(0, len(body), win):
         seg = body[i:i + win]

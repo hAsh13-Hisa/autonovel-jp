@@ -29,7 +29,12 @@ from collections import Counter
 
 
 def main(path: str) -> None:
-    text = open(path, encoding="utf-8").read()
+    raw = open(path, encoding="utf-8").read()
+    # 2026-10-17 修正: 従来は改行・空白も文字数に入れていたため、段落の空行が多い章ほど
+    # セリフ比と重複判定が低く出ていた（本文が一字も変わらなくても、整形しただけで
+    # 第24章の最小窓が 41%→17% に落ちた＝物差しの側の不具合）。整形に依存しないよう、
+    # 空白（半角スペース・タブ・改行）を除いた本文で測る。全角スペースは本文の一部なので残す。
+    text = re.sub(r"[\r\n\t ]+", "", raw)
     total = len(text)
     quotes = re.findall(r"「[^」]*」", text)
     dlg = sum(len(q) for q in quotes)
