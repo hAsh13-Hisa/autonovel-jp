@@ -211,7 +211,7 @@ cp .env.example .env    # 編集する
 
 # 縦書き・右開きの EPUB を作る（作品フォルダの 出版/epub.json を読む）
 .venv/bin/python build_epub.py --font /path/to/NotoSerifJP-sub.ttf
-#   → 出版/<題名>.epub。旧版は /opt/data/backups/ に退避される
+#   → 出版/<題名>.epub。旧版は $AUTONOVEL_BACKUP_DIR（既定 ~/backups）へ退避される
 
 # 章ゲートだけ単独で確認する
 .venv/bin/python verify_chapter_gates.py
@@ -257,7 +257,7 @@ export AUTONOVEL_PYTHON=/path/to/autonovel/.venv/bin/python # 依存の入った
   "line_height": 2.0,
   "toc": {"chapters": true, "afterword": true, "books_list": false, "colophon": false},
   "title_ruby": {"真": "シン"},
-  "ruby": [["鬼", "らせつ"], ["獣", "けもの"]]
+  "ruby": [["瑞兆", "ずいちょう"], ["獣", "けもの"]]
 }
 ```
 
@@ -280,7 +280,7 @@ export AUTONOVEL_PYTHON=/path/to/autonovel/.venv/bin/python # 依存の入った
 
 **検証（必ずやる）**
 
-- `epubcheck` を1回回す（`/opt/data/scripts/epubcheck.sh <file.epub>`）。CSSのフォントURLが `../fonts/…` だと `RSC-007` で落ちる
+- `epubcheck` を1回回す（`java -jar epubcheck.jar <file.epub>`）。CSSのフォントURLが `../fonts/…` だと `RSC-007` で落ちる
 - **本文の欠落検査**：タグと `rt`/`rp` を除去したテキストが原稿と完全一致するか
 - **グリフ網羅**：EPUB内の表示テキストの全文字がフォントの `cmap` にあるか（原稿を編集したのにフォントを作り直すのを忘れると、新しい文字が**無言で消える**）
 - **見た目**：`style.css`・`fonts/`・対象の `.xhtml` を同じ階層に取り出してブラウザで開き、スクショを撮って位置を測る（縦組みは % 余白の基準が直感と違う）

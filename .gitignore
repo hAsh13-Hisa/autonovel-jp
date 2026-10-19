@@ -9,3 +9,7 @@ __pycache__/
 typeset/*.pdf
 typeset/chapters_content.tex
 *.pdf
+state.json
+出版/
+manuscript.md
+*.epub

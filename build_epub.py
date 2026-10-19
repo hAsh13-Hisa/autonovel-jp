@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import os
 import json
 import re
 import shutil
@@ -389,7 +390,8 @@ body.colophon p { text-indent: 0; margin: 0 0 0.4em 0; }
 
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.exists():
-        backup = Path("/opt/data/backups") / f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.epub"
+        backup_dir = Path(os.environ.get("AUTONOVEL_BACKUP_DIR", str(Path.home() / "backups")))
+        backup = backup_dir / f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.epub"
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(out), str(backup))
     with zipfile.ZipFile(out, "w") as z:
