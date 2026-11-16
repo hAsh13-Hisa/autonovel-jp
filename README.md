@@ -6,6 +6,13 @@ AIエージェントだけで小説を書き、推敲し、組版する自律パ
 設計の前提は **AIエージェントがツール群を操作すること** です（`program.md` は各フェーズの
 エージェント指示書。人間が手動で全部動かす手順は [WORKFLOW.md](WORKFLOW.md)）。
 
+## 制作例
+
+- **『真・桃太郎』**（Kindle）— autonovel-jp による制作例。12万8千字・全25章の長編。
+  https://www.amazon.co.jp/dp/B0HNJW21YX
+- **『アイデアは僕が、文章はAIが。10万字を書き上げた「直す工程」の設計図』**（Brain）— この仕組みの作り方を、実際に書かせた数字つきで解説した教材。
+  https://brain-market.com/u/hash13/a/b4EzM2cjMgoTZsNWa0JXY
+
 ## Hermes Agent で使い始める
 
 このリポジトリURLを [Hermes Agent](https://github.com/NousResearch/Hermes) に渡せば、
