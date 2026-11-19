@@ -43,6 +43,15 @@ import re
 import sys
 from pathlib import Path
 
+
+def _warn(where: str, exc: Exception) -> None:
+    """検査が落ちたことを黙って飲み込まない（2026-11-19 修正）.
+
+    以前は `except Exception: return []` で、検査不能と「指摘なし」が
+    同じ出力になり、ゲートが壊れていても誰も気づけなかった。
+    """
+    print(f"[verify] 検査不能: {where}: {type(exc).__name__}: {exc}", file=sys.stderr)
+
 BASE_DIR = Path(__file__).resolve().parent
 
 # 既定で回す機械項目。unused_setting は「全体を見る材料」なので既定では回さない
@@ -386,7 +395,8 @@ def check_pronoun_shift(chapters: list, characters: "Path | None" = None,
     if characters is not None:
         try:
             persons = _load_person_pronouns(characters)
-        except Exception:
+        except Exception as e:
+            _warn("check_pronoun_shift", e)
             persons = {}
         if persons:
             prev = {}
@@ -488,7 +498,8 @@ def check_term_shift(chapters: list, characters: Path, span: int = 2) -> list:
     """
     try:
         defined = extract_defined_names(characters)
-    except Exception:
+    except Exception as e:
+        _warn("check_term_shift", e)
         return []
     if not defined:
         return []
@@ -522,7 +533,8 @@ def _voice_identifies(line: str, characters: Path) -> bool:
     """
     try:
         text = read(characters)
-    except Exception:
+    except Exception as e:
+        _warn("_voice_identifies", e)
         return False
     # 「口癖」行から「」で囲まれた口癖を集める（例: 口癖: 「……（沈黙）」「（視える）」）
     habits = {}
@@ -558,7 +570,8 @@ def check_speaker_gap(chapters: list, characters: Path) -> list:
     """
     try:
         defined = extract_defined_names(characters)
-    except Exception:
+    except Exception as e:
+        _warn("check_speaker_gap", e)
         return []
     speaker_cues = ("言っ", "呟", "叫", "囁", "答", "尋ね", "問", "声", "続け", "付け加",
                     "付け足", "遮", "反論", "確認", "宣言", "唱")
@@ -614,7 +627,8 @@ def check_voice_pronoun_conflict(chapters: list, characters: Path) -> list:
     """
     try:
         persons = _load_person_pronouns(characters)
-    except Exception:
+    except Exception as e:
+        _warn("check_voice_pronoun_conflict", e)
         return []
     if not persons:
         return []

@@ -190,6 +190,10 @@ while (len(result.strip()) < 500) and attempt < 4:
 # Write part 1 to outline.md and hand off to /tmp/outline_output.md for part 2
 outline_path = project_dir() / "outline.md"
 outline_path.write_text(result.strip() + "\n")
-tmp_path = Path("/tmp/outline_output.md")
-tmp_path.write_text(result.strip() + "\n")
+# 2026-11-19 修正: /tmp の固定パスは共有領域で、他プロセスと衝突し、
+# 先回りされたシンボリックリンク経由で別の場所へ書かされる余地がある。
+# 作品ディレクトリ内の git 管理外（edit_logs/）へ置く。
+tmp_path = project_dir() / "edit_logs" / "outline_part1.md"
+tmp_path.parent.mkdir(parents=True, exist_ok=True)
+tmp_path.write_text(result.strip() + "\n", encoding="utf-8")
 print(result)

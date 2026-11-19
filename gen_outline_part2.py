@@ -169,9 +169,9 @@ def main() -> None:
     mystery = read_project_file("MYSTERY.md")
 
     # Part 1 (chapters 1-12) from the handoff file
-    part1_path = Path("/tmp/outline_output.md")
+    part1_path = project_dir() / "edit_logs" / "outline_part1.md"
     if not part1_path.exists():
-        print("ERROR: /tmp/outline_output.md not found (run gen_outline.py first)", file=sys.stderr)
+        print(f"ERROR: {part1_path} not found (run gen_outline.py first)", file=sys.stderr)
         sys.exit(1)
     part1 = part1_path.read_text()
 

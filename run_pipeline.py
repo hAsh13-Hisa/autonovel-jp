@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime
@@ -315,8 +316,12 @@ def uv_run(script: str, timeout: int = 600) -> subprocess.CompletedProcess:
 
 def git_add_commit(message: str) -> str:
     """Stage all changes and commit. Returns short hash or empty string."""
-    run_tool("git add -A")
-    result = run_tool(f'git commit -m "{message}" --allow-empty')
+    # 2026-11-19 修正: .gitignore で .env は除外済みだが、名前を変えた鍵や
+    # 別名の秘密ファイルまで拾わないよう、明示的にも除外しておく。
+    run_tool("git add -A -- ':!.env' ':!.env.*' ':!*.pem' ':!*.key'")
+    # 2026-11-19 修正: メッセージに " や $() が入るとシェルで壊れる／
+    # 意図しないコマンドが走る（question は JSON 由来の外部入力）。
+    result = run_tool(f"git commit -m {shlex.quote(message)} --allow-empty")
     if result.returncode == 0:
         hash_result = run_tool("git rev-parse --short HEAD")
         commit_hash = hash_result.stdout.strip()
@@ -325,6 +330,24 @@ def git_add_commit(message: str) -> str:
     else:
         step("GIT: nothing to commit or commit failed")
         return ""
+
+
+def git_revert_chapter(ch_num: int) -> None:
+    """対象章のファイルだけを HEAD に戻す（2026-11-19 修正）.
+
+    以前は改訂の不採用で `git reset --hard HEAD` を打っていたため、
+    同じサイクルで編集中の**他章・ブリーフ・ログまでまとめて消えていた**。
+    """
+    rel = f"chapters/ch_{ch_num:02d}.md"
+    tracked = run_tool(f"git ls-files --error-unmatch {shlex.quote(rel)}")
+    if tracked.returncode == 0:
+        run_tool(f"git checkout -- {shlex.quote(rel)}")
+        step(f"GIT REVERT: {rel}（他章の変更は残す）")
+    else:
+        p = BASE_DIR / rel
+        if p.exists():
+            p.unlink()
+            step(f"GIT REVERT: {rel} は未追跡だったので削除")
 
 
 QUOTA_MARKER = BASE_DIR / "edit_logs" / "STOP_QUOTA.txt"
@@ -391,6 +414,15 @@ def git_reset_hard(ref: str = "HEAD~1", keep_seed: bool = True):
     seed_file = BASE_DIR / "seed.txt"
     seed_backup = seed_file.read_text(encoding="utf-8") if seed_file.exists() else None
     step(f"GIT RESET: {ref}")
+    # 2026-11-19 修正: 全体 reset は他章の未コミット作業も消す。
+    # 消える差分を edit_logs/ に退避しておき、拾い直せるようにする（挙動は変えない）。
+    try:
+        backup = BASE_DIR / "edit_logs" / f"pre_reset_{datetime.now().strftime('%Y%m%d_%H%M%S')}.diff"
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_text(run_tool("git diff HEAD").stdout or "", encoding="utf-8")
+        print(f"  退避: {backup}（reset で消える差分）")
+    except OSError as e:
+        print(f"  WARN: 差分の退避に失敗: {e}")
     run_tool(f"git reset --hard {ref}")
     if keep_seed and seed_backup:
         now = seed_file.read_text(encoding="utf-8") if seed_file.exists() else ""
@@ -1370,7 +1402,10 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                                       (pre_eval.stderr or "") + (pre_eval.stdout or ""))
 
             # Generate revision brief
-            brief_file = BRIEFS_DIR / f"ch{ch_num:02d}_cycle{cycle}_{question}.md"
+            # 2026-11-19 修正: question は reader_panel.json の値（外部由来）なので、
+            # パス区切りや空白が混ざると意図しない場所に書く。ファイル名に使える形に落とす。
+            _q = re.sub(r"[^A-Za-z0-9_-]+", "_", str(question))[:40] or "item"
+            brief_file = BRIEFS_DIR / f"ch{ch_num:02d}_cycle{cycle}_{_q}.md"
             gen_brief = BASE_DIR / "gen_brief.py"
             strength_brief = BRIEFS_DIR / f"ch{ch_num:02d}_cycle{cycle}_strength.md"
             if strength_brief.exists():
@@ -1444,7 +1479,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                         fh.write("\n\n" + extra + "\n")
                     step(f"  整合の指摘をブリーフに足しました（{len(extra)}字）")
 
-            uv_run(f"gen_revision.py {ch_num} {brief_file}", timeout=600)
+            uv_run(f"gen_revision.py {ch_num} {shlex.quote(str(brief_file))}", timeout=600)
 
             # 本文を触ったので章ゲートを回す（FAIL なら修復 → それでも駄目なら元に戻す）
             ch_file = CHAPTERS_DIR / f"ch_{ch_num:02d}.md"
@@ -1505,7 +1540,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
             else:
                 step(f"Revision made it worse and lost the pairwise "
                      f"({post_score} < {pre_score}), reverting")
-                git_reset_hard("HEAD")
+                git_revert_chapter(ch_num)
                 log_result("reverted", f"rev-ch{ch_num:02d}", post_score,
                            word_count, "discard",
                            f"Cycle {cycle}: {question} {why}")

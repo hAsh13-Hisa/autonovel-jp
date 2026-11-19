@@ -121,6 +121,16 @@ def page(title: str, body: str, css: str = "../style.css") -> str:
 '''
 
 
+def safe_filename(name: str) -> str:
+    """題名をファイル名に使える形にする（2026-11-19 修正）.
+
+    題名は seed.txt・epub.json から来るので、`../` や `/` が混ざると
+    `出版/` の外へ書き込まれる。
+    """
+    s = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", str(name)).strip()
+    return s or "untitled"
+
+
 def build(project: Path, out: Path, font: Path, cfg: dict) -> dict:
     OEBPS = "OEBPS"
     files: list[tuple[str, bytes]] = []
@@ -391,7 +401,7 @@ body.colophon p { text-indent: 0; margin: 0 0 0.4em 0; }
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.exists():
         backup_dir = Path(os.environ.get("AUTONOVEL_BACKUP_DIR", str(Path.home() / "backups")))
-        backup = backup_dir / f"{title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.epub"
+        backup = backup_dir / f"{safe_filename(title)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.epub"
         backup.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(out), str(backup))
     with zipfile.ZipFile(out, "w") as z:
@@ -410,7 +420,7 @@ def main() -> int:
     a = ap.parse_args()
     project = Path(a.project).resolve()
     cfg = load_config(project)
-    out = Path(a.out) if a.out else project / "出版" / f"{cfg['title']}.epub"
+    out = Path(a.out) if a.out else project / "出版" / f"{safe_filename(cfg['title'])}.epub"
     info = build(project, out, Path(a.font), cfg)
     print(f"書いた: {info['path']} ({Path(info['path']).stat().st_size/1024/1024:.2f} MB)")
     print(f"章: {info['chapters']} / spine: {info['spine']}ページ / ルビ: {info['ruby']}箇所 / ファイル: {info['files']}")

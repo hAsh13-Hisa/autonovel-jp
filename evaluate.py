@@ -535,7 +535,16 @@ def _cache_path(key: str) -> Path:
 def call_judge_json(prompt: str, max_tokens: int | None = None) -> dict:
     """judge を呼んで JSON を返す。同じ入力なら前の結果を再利用する（費用対策）."""
     prompt = prompt + JSON_COMPACT_RULES
-    key = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+    # 2026-11-19 修正: プロンプトだけをキーにすると、判定モデルや上限を替えても
+    # 古い結果が再利用される（モデル比較ができず、同じ点数が返り続ける）。
+    key_src = "|".join([
+        os.environ.get("AUTONOVEL_JUDGE_MODEL", ""),
+        os.environ.get("AUTONOVEL_JUDGE_BASE_URL", ""),
+        str(max_tokens),
+        "v2",
+        prompt,
+    ])
+    key = hashlib.sha256(key_src.encode("utf-8")).hexdigest()[:16]
     cached = _cache_path(key)
     if JUDGE_CACHE and cached.exists():
         sys.stderr.write("[evaluate] 同じ入力の評価が既にあるので再利用します"
@@ -894,7 +903,12 @@ def evaluate_chapter(chapter_num):
 
     # Extract this chapter's outline entry (rough heuristic)
     outline = layers["outline"]
-    ch_pattern = rf'###\s*Ch\s*{chapter_num}\b.*?(?=###\s*Ch\s*\d|## Act|## Foreshadowing|$)'
+    # 2026-11-19 修正: 生成側は `### 第N章：題` と日本語で書くため、英語の `### Ch N`
+    # だけを見ていると常に「(outline entry not found)」になり、章の狙いを渡さずに採点していた。
+    ch_pattern = (
+        rf'###\s*(?:Ch\s*{chapter_num}\b|第\s*0*{chapter_num}\s*章)'
+        rf'.*?(?=###\s*(?:Ch\s*\d|第\s*\d+\s*章)|## Act|## Foreshadowing|$)'
+    )
     ch_match = re.search(ch_pattern, outline, re.DOTALL)
     chapter_outline = ch_match.group(0) if ch_match else "(outline entry not found)"
 

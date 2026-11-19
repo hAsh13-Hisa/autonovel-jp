@@ -5,6 +5,7 @@ Measures the things the voice doc says SHOULD be true and checks if they ARE.
 
 Outputs: voice_fingerprint.json with per-chapter metrics.
 """
+import os
 import re
 import json
 import statistics

@@ -182,6 +182,16 @@ def guess_title(paths: list[Path]) -> str:
     return DEFAULT_TITLE
 
 
+def safe_filename(name: str) -> str:
+    """題名をファイル名に使える形にする.
+
+    2026-11-19 修正: 題名は章見出し（LLM生成）や seed.txt から来るので、
+    `../` や `/` が混ざると `出版/` の外へ書き込まれる。
+    """
+    s = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", str(name)).strip()
+    return s or "untitled"
+
+
 def build_docx(paths: list[Path], title: str, with_toc: bool) -> tuple[Document, int]:
     doc = Document()
 
@@ -255,7 +265,7 @@ def main() -> int:
     title = args.title or guess_title(paths)
     doc, n_para = build_docx(paths, title, args.with_toc)
 
-    out = Path(args.out) if args.out else project_dir() / "出版" / f"{title}.docx"
+    out = Path(args.out) if args.out else project_dir() / "出版" / f"{safe_filename(title)}.docx"
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out))
 
