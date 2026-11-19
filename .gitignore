@@ -13,3 +13,6 @@ state.json
 出版/
 manuscript.md
 *.epub
+
+# 実行ログ（2026-11-19 追加）
+*.log
