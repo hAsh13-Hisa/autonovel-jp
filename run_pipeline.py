@@ -185,7 +185,7 @@ PHASE_ORDER = ["foundation", "drafting", "revision", "export"]
 def load_state() -> dict:
     """Load pipeline state from state.json, creating defaults if missing."""
     if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
+        with open(STATE_FILE, encoding="utf-8") as f:
             return json.load(f)
     return default_state()
 
@@ -207,7 +207,7 @@ def default_state() -> dict:
 
 def save_state(state: dict):
     """Write state to state.json."""
-    with open(STATE_FILE, "w") as f:
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
 
@@ -220,10 +220,10 @@ def log_result(commit: str, phase: str, score, word_count: int,
     """Append a row to results.tsv."""
     header = "commit\tphase\tscore\tword_count\tstatus\tdescription\n"
     if not RESULTS_FILE.exists():
-        RESULTS_FILE.write_text(header)
+        RESULTS_FILE.write_text(header, encoding="utf-8")
     elif RESULTS_FILE.stat().st_size == 0:
-        RESULTS_FILE.write_text(header)
-    with open(RESULTS_FILE, "a") as f:
+        RESULTS_FILE.write_text(header, encoding="utf-8")
+    with open(RESULTS_FILE, "a", encoding="utf-8") as f:
         f.write(f"{commit}\t{phase}\t{score}\t{word_count}\t{status}\t{description}\n")
 
 
@@ -478,7 +478,7 @@ def count_words_in_chapters() -> int:
     total = 0
     if CHAPTERS_DIR.exists():
         for f in CHAPTERS_DIR.glob("ch_*.md"):
-            total += jp_char_count(f.read_text())
+            total += jp_char_count(f.read_text(encoding="utf-8"))
     return total
 
 
@@ -490,18 +490,32 @@ def count_chapter_files() -> int:
 
 
 def get_total_chapters(state: dict) -> int:
-    """Determine total chapter count from state or outline."""
+    """Determine total chapter count from env, state or outline.
+
+    2026-11-22 修正: `AUTONOVEL_CHAPTERS` をここで見ていなかったため、env で
+    章数を絞っても工程は既定の24章として動いていた（`gen_outline*.py` だけが env を
+    読んでいた）。明示指定を最優先にする。
+    """
+    env_raw = os.environ.get("AUTONOVEL_CHAPTERS", "").strip()
+    if env_raw:
+        try:
+            return max(1, int(env_raw))   # 0 や負値は 1 章として扱う（gen_outline と同じ）
+        except ValueError:
+            print(f"[run_pipeline] WARNING: AUTONOVEL_CHAPTERS={env_raw!r} は整数ではない（無視する）",
+                  file=sys.stderr)
     if state.get("chapters_total", 0) > 0:
         return state["chapters_total"]
-    # Try to infer from outline.md
-    outline = BASE_DIR / "outline.md"
-    if outline.exists():
-        text = outline.read_text()
-        matches = re.findall(r'###\s*Ch(?:apter)?\s*(\d+)', text)
-        if not matches:
-            matches = re.findall(r'###\s*第(\d+)章', text)
-        if matches:
-            return max(int(m) for m in matches)
+    # Try to infer from outline.md（カレント優先＝作り直しのコピー先で動かすため）
+    for outline in (Path.cwd() / "outline.md", BASE_DIR / "outline.md"):
+        if not outline.exists():
+            continue
+        text = outline.read_text(encoding="utf-8")
+        # 2026-11-22 修正: 生成側は `## 第N章`（レベル2）で書くのに、
+        # ここは `###` しか見ていなかった＝日本語の章立てを一度も読めていなかった。
+        matches = re.findall(r'^#{2,3}\s*(?:Ch(?:apter)?\s*(\d+)|第(\d+)章)', text, re.MULTILINE)
+        nums = [int(a or b) for a, b in matches]
+        if nums:
+            return max(nums)
     return 24  # sensible default
 
 
@@ -536,8 +550,11 @@ def run_foundation(state: dict) -> dict:
         step("Generating outline (part 1)...")
         uv_run("gen_outline.py", timeout=300)
 
-        step("Generating outline (part 2 — foreshadowing)...")
-        uv_run("gen_outline_part2.py", timeout=300)
+        if get_total_chapters(state) < 2:
+            step("1章ものなので outline part 2（後半・伏線台帳）は回しません")
+        else:
+            step("Generating outline (part 2 — foreshadowing)...")
+            uv_run("gen_outline_part2.py", timeout=300)
 
         step("Generating canon...")
         uv_run("gen_canon.py", timeout=300)
@@ -869,7 +886,7 @@ def run_drafting(state: dict) -> dict:
                     step("Chapter file missing or too short, retrying...")
                     continue
 
-            word_count = jp_char_count(ch_file.read_text())
+            word_count = jp_char_count(ch_file.read_text(encoding="utf-8"))
             step(f"Drafted {word_count}字")
 
             # Evaluate (retry on parse failure / judge model returning bad JSON)
@@ -970,7 +987,7 @@ def run_drafting(state: dict) -> dict:
                 run_tool(f"mv {best_draft} chapters/ch_{ch:02d}.md")
                 step(f"合格はしませんでしたが、いちばん良かった稿（{best_score}）を残します")
             if ch_file.exists():
-                word_count = jp_char_count(ch_file.read_text())
+                word_count = jp_char_count(ch_file.read_text(encoding="utf-8"))
                 commit_hash = git_add_commit(
                     f"ch{ch:02d}: best-effort after {MAX_CHAPTER_ATTEMPTS} attempts")
                 log_result(commit_hash, f"ch{ch:02d}", best_score if best_score >= 0 else "?",
@@ -1003,7 +1020,7 @@ def parse_panel_consensus(panel_path: Path) -> list[dict]:
     """
     if not panel_path.exists():
         return []
-    with open(panel_path) as f:
+    with open(panel_path, encoding="utf-8") as f:
         data = json.load(f)
 
     items = []
@@ -1222,7 +1239,7 @@ def choose_review_targets(review_data: dict, max_n: int = 3) -> list:
                     return picked[:max_n]
     if not picked:
         try:
-            full = json.loads(sorted(EVAL_LOGS_DIR.glob("*_full.json"))[-1].read_text())
+            full = json.loads(sorted(EVAL_LOGS_DIR.glob("*_full.json"))[-1].read_text(encoding="utf-8"))
             weakest = full.get("weakest_chapter")
             if weakest:
                 add([int(weakest)])
@@ -1431,7 +1448,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                     f"Focus: address the {question.replace('_', ' ')} issue.\n"
                     f"Preserve existing voice, character work, and essential beats.\n"
                 )
-                brief_file.write_text(brief_content)
+                brief_file.write_text(brief_content, encoding="utf-8")
 
             if not brief_file.exists():
                 step(f"No brief file found for Ch {ch_num}, skipping")
@@ -1516,7 +1533,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                                       (post_eval.stderr or "") + (post_eval.stdout or ""))
 
             ch_file = CHAPTERS_DIR / f"ch_{ch_num:02d}.md"
-            word_count = jp_char_count(ch_file.read_text()) if ch_file.exists() else 0
+            word_count = jp_char_count(ch_file.read_text(encoding="utf-8")) if ch_file.exists() else 0
 
             step(f"Ch {ch_num}: {pre_score} -> {post_score}")
 
@@ -1624,7 +1641,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                 (EDIT_LOGS_DIR).glob("*_review.json"), reverse=True)
             if review_logs:
 
-                review_data = json.loads(review_logs[0].read_text())
+                review_data = json.loads(review_logs[0].read_text(encoding="utf-8"))
                 stars = review_data.get("stars", 0) or 0
                 total_items = review_data.get("total_items", 0)
                 major_items = review_data.get("major_items", 0)
@@ -1785,12 +1802,12 @@ def run_export(state: dict) -> dict:
 
     parts = []
     for ch_file in chapter_files:
-        text = ch_file.read_text().strip()
+        text = ch_file.read_text(encoding="utf-8").strip()
         if text:
             parts.append(text)
 
     if parts:
-        manuscript.write_text("\n\n---\n\n".join(parts) + "\n")
+        manuscript.write_text("\n\n---\n\n".join(parts) + "\n", encoding="utf-8")
         word_count = sum(jp_char_count(p) for p in parts)
         step(f"Manuscript: {len(parts)} chapters, {word_count}字")
     else:

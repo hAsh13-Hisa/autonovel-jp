@@ -123,7 +123,7 @@ JSONで応答すること:
 
 def edit_chapter(ch_num):
     ch_path = CHAPTERS_DIR / f"ch_{ch_num:02d}.md"
-    text = ch_path.read_text()
+    text = ch_path.read_text(encoding="utf-8")
     word_count = len(text.split())
     
     prompt = EDIT_PROMPT.format(chapter_text=text, word_count=word_count)
@@ -132,7 +132,7 @@ def edit_chapter(ch_num):
     
     # Save log
     log_path = EDIT_LOG_DIR / f"ch{ch_num:02d}_cuts.json"
-    with open(log_path, "w") as f:
+    with open(log_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     
     return result, word_count

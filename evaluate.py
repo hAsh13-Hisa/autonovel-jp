@@ -354,7 +354,7 @@ def slop_score(text):
 def load_file(path):
     """Load a text file, return empty string if missing."""
     try:
-        return Path(path).read_text()
+        return Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
 
@@ -392,7 +392,7 @@ def load_all_chapters():
     chapters = {}
     for f in sorted(glob.glob(str(CHAPTERS_DIR / "ch_*.md"))):
         num = int(re.search(r'ch_(\d+)', f).group(1))
-        chapters[num] = Path(f).read_text()
+        chapters[num] = Path(f).read_text(encoding="utf-8")
     return chapters
 
 
@@ -1057,7 +1057,7 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     mode = args.phase or (f"ch{args.chapter:02d}" if args.chapter else "full")
     log_path = EVAL_LOG_DIR / f"{timestamp}_{mode}.json"
-    with open(log_path, "w") as f:
+    with open(log_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     print(f"\neval_log: {log_path}")
 

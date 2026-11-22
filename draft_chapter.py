@@ -33,7 +33,7 @@ def call_writer(prompt, max_tokens=16000):
 
 def load_file(path):
     try:
-        return Path(path).read_text()
+        return Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
 
@@ -68,7 +68,7 @@ def main():
     # Previous chapter (if exists)
     prev_path = CHAPTERS_DIR / f"ch_{chapter_num - 1:02d}.md"
     if prev_path.exists():
-        prev_text = prev_path.read_text()
+        prev_text = prev_path.read_text(encoding="utf-8")
         prev_tail = prev_text[-2000:] if len(prev_text) > 2000 else prev_text
     else:
         prev_tail = "(first chapter -- no previous)"
@@ -138,7 +138,7 @@ CANON（確定事実。これに矛盾しないこと）：
 
     # Save
     out_path = CHAPTERS_DIR / f"ch_{chapter_num:02d}.md"
-    out_path.write_text(result)
+    out_path.write_text(result, encoding="utf-8")
     print(f"Saved to {out_path}", file=sys.stderr)
     print(f"Word count: {len(result.split())}", file=sys.stderr)
     print(result)

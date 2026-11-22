@@ -57,6 +57,19 @@ ROLES_BASE_URL_ENV = {
     "review": "AUTONOVEL_REVIEW_BASE_URL",
 }
 
+# 役割ごとの API キー（2026-11-22 追加）。指定が無ければ従来どおり
+# `AUTONOVEL_API_KEY` を使う。役割ごとに接続先を変えられる設計なのに鍵が1本
+# しか無いと、writer 用のクラウド鍵が別プロバイダへ送られる（2026-11-19 レビュー指摘）。
+ROLES_KEY_ENV = {
+    "writer": "AUTONOVEL_WRITER_API_KEY",
+    "revision": "AUTONOVEL_REVISION_API_KEY",
+    "judge": "AUTONOVEL_JUDGE_API_KEY",
+    "review": "AUTONOVEL_REVIEW_API_KEY",
+}
+
+# 平文 http を許す接続先（同じマシンの中だけ）。ここ以外は https を要求する。
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
+
 # Fallback default base URL (local Ollama)
 # Default: local Ollama on the same machine. Inside Docker/containers,
 # point at the host via: AUTONOVEL_API_BASE_URL=http://host.docker.internal:11434/v1
@@ -179,6 +192,28 @@ def _log_usage(role: str, model: str, usage: dict) -> None:
         sys.stderr.write(f"[llm] usage 記録に失敗: {e}\n")
 
 
+def _check_endpoint(role: str, base: str) -> None:
+    """接続先の安全性を確かめる（2026-11-22 追加）。
+
+    なぜ: 役割ごとに接続先を変えられるのに、平文 http のリモートを指すと
+    API キーがそのまま流れる。loopback 以外は https を要求する。
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(base)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "https":
+        return
+    if parsed.scheme == "http" and host in LOOPBACK_HOSTS:
+        return
+    raise ValueError(
+        f"[llm] {role} の接続先 {base!r} が安全でない。"
+        "https か、同じマシン（localhost / 127.0.0.1 / host.docker.internal）の "
+        "http を指定すること（API キーが平文で流れるため）。")
+
+
+_LOGGED_ENDPOINTS: set = set()
+
+
 def _resolve(role: str):
     """Return (model, base_url, api_key) for the given role."""
     if role not in ROLES_MODEL_ENV:
@@ -186,9 +221,20 @@ def _resolve(role: str):
     env_model, default_model = ROLES_MODEL_ENV[role]
     model = os.environ.get(env_model, default_model)
     env_base = ROLES_BASE_URL_ENV.get(role, "AUTONOVEL_API_BASE_URL")
-    base = os.environ.get(env_base, DEFAULT_BASE_URL)
-    key = os.environ.get("AUTONOVEL_API_KEY", "")
-    return model, base.rstrip("/"), key
+    base = os.environ.get(env_base, DEFAULT_BASE_URL).rstrip("/")
+    _check_endpoint(role, base)
+    env_key = ROLES_KEY_ENV.get(role, "")
+    key = (os.environ.get(env_key, "") if env_key else "") \
+        or os.environ.get("AUTONOVEL_API_KEY", "")
+    if role not in _LOGGED_ENDPOINTS:
+        # 送信先は起動時に一度だけ記録する（鍵そのものは出さない）
+        from urllib.parse import urlparse
+        u = urlparse(base)
+        sys.stderr.write(
+            f"[llm] role={role} model={model} host={u.scheme}://{u.hostname} "
+            f"key={'自前' if (env_key and os.environ.get(env_key)) else ('共有' if key else 'なし')}\n")
+        _LOGGED_ENDPOINTS.add(role)
+    return model, base, key
 
 
 # 評価役（judge/review）の回答言語: 作品は日本語なので、指摘・理由も日本語で書かせる。

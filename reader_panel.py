@@ -212,7 +212,7 @@ def find_disagreements(results):
     return disagreements
 
 def main():
-    arc_summary = (BASE_DIR / "arc_summary.md").read_text()
+    arc_summary = (BASE_DIR / "arc_summary.md").read_text(encoding="utf-8")
     
     results = {}
     failed = []
@@ -282,7 +282,7 @@ def main():
         "timestamp": datetime.now().isoformat()
     }
     out_path = BASE_DIR / "edit_logs" / "reader_panel.json"
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
     print(f"\n保存: {out_path}")
     return 0

@@ -21,7 +21,7 @@ CHAPTERS_DIR = BASE_DIR / "chapters"
 
 def load_file(path):
     try:
-        return Path(path).read_text()
+        return Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
 
@@ -112,7 +112,7 @@ def main():
     if n > 1:
         p = CHAPTERS_DIR / f"ch_{n - 1:02d}.md"
         if p.exists():
-            t = p.read_text()
+            t = p.read_text(encoding="utf-8")
             prev_txt = f"(前章の末尾) {t[-2000:]}"
 
     w = prune_sections(world, kws)
@@ -203,7 +203,7 @@ CANON（確定事実）：
             break
 
     out = CHAPTERS_DIR / f"ch_{n:02d}.md"
-    out.write_text(best)
+    out.write_text(best, encoding="utf-8")
     print(f"Saved {out}", file=sys.stderr)
     print(f"Chars: {len(best)}", file=sys.stderr)
     print(best)

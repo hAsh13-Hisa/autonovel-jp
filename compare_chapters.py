@@ -116,8 +116,8 @@ Respond with JSON:
 
 def compare(ch_a, ch_b):
     cdir = chapters_dir()
-    text_a = (cdir / f"ch_{ch_a:02d}.md").read_text()
-    text_b = (cdir / f"ch_{ch_b:02d}.md").read_text()
+    text_a = (cdir / f"ch_{ch_a:02d}.md").read_text(encoding="utf-8")
+    text_b = (cdir / f"ch_{ch_b:02d}.md").read_text(encoding="utf-8")
     
     # Truncate to ~3000 words each to fit context
     words_a = text_a.split()
@@ -229,7 +229,7 @@ def main():
             "timestamp": datetime.now().isoformat()
         }
         out_path = BASE_DIR / "edit_logs" / "tournament_results.json"
-        with open(out_path, "w") as f:
+        with open(out_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
         print(f"\nSaved to {out_path}")
 

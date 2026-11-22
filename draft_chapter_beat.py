@@ -37,7 +37,7 @@ def call_writer(prompt, max_tokens=6000):
 
 def load_file(path):
     try:
-        return Path(path).read_text()
+        return Path(path).read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
 
@@ -170,7 +170,19 @@ def extract_doc_sections(text, keywords, max_chars=6000):
 
 
 def extract_keywords(beat, character_names):
-    """Derive search keywords from the BEAT text only (not the whole outline)."""
+    """Derive search keywords from the BEAT text only (not the whole outline).
+
+    第2引数は**キャラ名のリスト**（`extract_character_names()` の戻り値）。
+    2026-11-22 修正: gen_revision.py が `extract_keywords(brief, brief)` と
+    文字列を渡していたため、brief の全文字がキーワードになり、枝刈りが丸ごと
+    無効化されていた（＝毎回 world/canon を全文送る長文プロンプト＝空応答の誘発）。
+    文字列が来たら黙って受け入れず、その場で落とす。
+    """
+    if isinstance(character_names, str):
+        raise TypeError(
+            "extract_keywords(beat, character_names) の第2引数はキャラ名のリスト。"
+            "文字列を渡すと全文字がキーワードになり枝刈りが無効になる。"
+            "extract_character_names(characters) を渡すこと。")
     kws = []
     for name in character_names:
         # Match the first token of the character name (e.g. 主人公)
@@ -205,7 +217,7 @@ def main():
     # Previous chapter tail (for continuity)
     prev_path = CHAPTERS_DIR / f"ch_{chapter_num - 1:02d}.md"
     if prev_path.exists():
-        prev_text = prev_path.read_text()
+        prev_text = prev_path.read_text(encoding="utf-8")
         prev_tail = prev_text[-1500:] if len(prev_text) > 1500 else prev_text
     else:
         prev_tail = "(first chapter -- no previous)"
@@ -331,7 +343,7 @@ CANON（確定済みの設定事実。このビートに関連する部分のみ
 
     # Save
     out_path = CHAPTERS_DIR / f"ch_{chapter_num:02d}.md"
-    out_path.write_text(chapter_text)
+    out_path.write_text(chapter_text, encoding="utf-8")
     print(f"Saved to {out_path}", file=sys.stderr)
     print(f"Total chars: {len(chapter_text)}", file=sys.stderr)
     print(chapter_text)

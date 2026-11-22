@@ -127,17 +127,17 @@ def load_style():
     if not STYLE_FILE.exists():
         print("No visual style found. Run: gen_art.py style")
         sys.exit(1)
-    return json.loads(STYLE_FILE.read_text())
+    return json.loads(STYLE_FILE.read_text(encoding="utf-8"))
 
 
 def load_picks():
     if PICKS_FILE.exists():
-        return json.loads(PICKS_FILE.read_text())
+        return json.loads(PICKS_FILE.read_text(encoding="utf-8"))
     return {}
 
 
 def save_picks(picks):
-    PICKS_FILE.write_text(json.dumps(picks, indent=2))
+    PICKS_FILE.write_text(json.dumps(picks, indent=2), encoding="utf-8")
 
 
 def get_reference_url(art_type):
@@ -153,12 +153,12 @@ def get_reference_url(art_type):
 # ============================================================
 
 def cmd_style(args):
-    world = (BASE_DIR / "world.md").read_text()[:5000]
-    voice = (BASE_DIR / "voice.md").read_text()[:3000]
+    world = (BASE_DIR / "world.md").read_text(encoding="utf-8")[:5000]
+    voice = (BASE_DIR / "voice.md").read_text(encoding="utf-8")[:3000]
     title = "Unknown"
     outline = BASE_DIR / "outline.md"
     if outline.exists():
-        title = outline.read_text().split("\n")[0].lstrip("# ").strip()
+        title = outline.read_text(encoding="utf-8").split("\n")[0].lstrip("# ").strip()
 
     prompt = f"""You are an art director designing the visual identity for a fantasy novel.
 
@@ -195,7 +195,7 @@ JSON only."""
     style = json.loads(text)
 
     ART_DIR.mkdir(exist_ok=True)
-    STYLE_FILE.write_text(json.dumps(style, indent=2))
+    STYLE_FILE.write_text(json.dumps(style, indent=2), encoding="utf-8")
 
     print(f"\nVisual style saved to {STYLE_FILE}")
     for k, v in style.items():
@@ -219,7 +219,7 @@ def cmd_curate(args):
 
     world = ""
     if (BASE_DIR / "world.md").exists():
-        world = (BASE_DIR / "world.md").read_text()[:3000]
+        world = (BASE_DIR / "world.md").read_text(encoding="utf-8")[:3000]
 
     print(f"Generating {n} radically different {art_type} directions...")
     directions = generate_directions(art_type, style, n, world)
@@ -276,7 +276,7 @@ def cmd_curate(args):
 
     # Save directions log for reference
     log_path = VARIANTS_DIR / f"{art_type}_directions.json"
-    log_path.write_text(json.dumps(directions_log, indent=2))
+    log_path.write_text(json.dumps(directions_log, indent=2), encoding="utf-8")
 
     print(f"\n{'='*50}")
     print(f"{n} DIRECTIONS for {art_type}:")
@@ -316,8 +316,30 @@ def _extract_geography(world_text):
 # PICK: select a variant as the final
 # ============================================================
 
+def safe_slug(value: str, what: str) -> str:
+    """CLI から来る名前をファイル名に使える形に限定する（2026-11-22 追加）。
+
+    なぜ: `../` を含む引数で art/ の外を読み書きできた（2026-11-19 レビュー指摘）。
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", value or ""):
+        print(f"ERROR: {what} に使えない文字が含まれています: {value!r}"
+              "（英数字・_・- のみ）")
+        sys.exit(2)
+    return value
+
+
+def inside_dir(path, base):
+    """`path` が `base` の中にあることを確かめる（外なら終了）。"""
+    path = Path(path).resolve()
+    base = Path(base).resolve()
+    if base != path and base not in path.parents:
+        print(f"ERROR: {path} は {base} の外を指しています")
+        sys.exit(2)
+    return path
+
+
 def cmd_pick(args):
-    art_type = args.art_type
+    art_type = safe_slug(args.art_type, "art-type")
     number = args.number
 
     variant_path = VARIANTS_DIR / f"{art_type}_{number:02d}.png"
@@ -338,6 +360,7 @@ def cmd_pick(args):
     else:
         final = ART_DIR / f"{art_type}.png"
 
+    inside_dir(final, ART_DIR)
     shutil.copy2(variant_path, final)
 
     # Save the pick with its URL for reference
@@ -368,7 +391,7 @@ def cmd_ornaments_all(args):
 
     for ch_path in chapters:
         num = int(ch_path.stem.split("_")[1])
-        title = ch_path.read_text().split("\n")[0].lstrip("# ").strip()
+        title = ch_path.read_text(encoding="utf-8").split("\n")[0].lstrip("# ").strip()
         if ": " in title:
             title = title.split(": ", 1)[1]
 
@@ -410,7 +433,7 @@ def cmd_scene_break(args):
 # ============================================================
 
 def cmd_vectorize(args):
-    target = args.target if args.target else "all"
+    target = safe_slug(args.target, "target") if args.target else "all"
 
     # Check potrace is available
     potrace = shutil.which("potrace")

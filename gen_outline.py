@@ -8,8 +8,28 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).parent
 # 章数（2026-10-19: プロンプトに 24 を直書きしていた。作品ごとに変えられるよう
 # env `AUTONOVEL_CHAPTERS` から取る。既定は本家と同じ24章。前半/後半の分割も章数から計算する）
-N_CHAPTERS = int(os.environ.get("AUTONOVEL_CHAPTERS", "24"))
-HALF = N_CHAPTERS // 2
+#
+# 2026-11-22 修正: `AUTONOVEL_CHAPTERS=1` を指定しても28章のアウトラインができた原因。
+# 値は読めていたが `HALF = 1 // 2 = 0` になり、プロンプトが「前半＝第1章〜第0章」
+# 「後半＝第1章〜第1章」という矛盾になった状態でモデルに渡っていた（章数はモデル任せ）。
+# → 1章だけなら分割しない（HALF = N_CHAPTERS）。不正な値は既定へ戻して警告する。
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"[gen_outline] {name}={raw!r} は整数ではない。{default} を使う", file=sys.stderr)
+        return default
+    if value < 1:
+        print(f"[gen_outline] {name}={value} は1未満。1として扱う", file=sys.stderr)
+        return 1
+    return value
+
+
+N_CHAPTERS = _env_int("AUTONOVEL_CHAPTERS", 24)
+HALF = N_CHAPTERS if N_CHAPTERS < 2 else N_CHAPTERS // 2
+# 1章ものは前半だけで完結する（run_pipeline.py はこのとき後半の工程を回さない）
+SINGLE_PART = N_CHAPTERS < 2
 # .env はカレント（＝作り直し版のコピー先）を優先し、無ければリポジトリ側。
 # なぜ: 作り直しの作業はコピー先で行うので、エンドポイントの設定も
 # コピー先の .env を使うべき。リポジトリ側の .env は git 管理外で
@@ -67,24 +87,8 @@ def read_project_file(name: str) -> str:
         return alt.read_text(encoding="utf-8")
     raise FileNotFoundError(
         f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
-def read_project_file(name: str) -> str:
-    """作品ファイルを読む。カレントに無ければリポジトリ側から読む。
-
-    なぜ1ファイルずつフォールバックするか（実測 2026-10-14）: 作り直しの
-    コピー先には seed.txt / world.md / characters.md はあっても MYSTERY.md や
-    CRAFT.md が無いことがある。project_dir() をカレント一択にすると
-    FileNotFoundError で起動すらできない。
-    → 作品に固有のファイルはカレント、共有のガイド（MYSTERY/CRAFT/voice）は
-      リポジトリにも探しに行く。
-    """
-    here = Path.cwd() / name
-    if here.exists():
-        return here.read_text(encoding="utf-8")
-    alt = repo_dir() / name
-    if alt.exists():
-        return alt.read_text(encoding="utf-8")
-    raise FileNotFoundError(f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
 import llm
+import safeio  # 書き込みの安全策（.bak 退避・短すぎる出力は書かない）
 
 
 def call_writer(prompt, max_tokens=16000):
@@ -96,21 +100,24 @@ def call_writer(prompt, max_tokens=16000):
     )
 
 
-seed = (project_dir() / "seed.txt").read_text()
-world = (project_dir() / "world.md").read_text()
-characters = (project_dir() / "characters.md").read_text()
-mystery = read_project_file("MYSTERY.md")
-craft = read_project_file("CRAFT.md")
 
-# Voice Part 2 only（見出しは「Part 2」でも「第○部」でも拾う。無ければ全文を使う）
-voice = read_project_file("voice.md")
-voice_lines = voice.split('\n')
-part2_start = next((i for i, l in enumerate(voice_lines)
-                    if l.lstrip().startswith('#')
-                    and ('Part 2' in l or '第2部' in l)), 0)
-voice_part2 = '\n'.join(voice_lines[part2_start:])
 
-prompt = f"""このファンタジー小説の章アウトラインの前半（第1章〜第{HALF}章）を構築してください。
+def main() -> None:
+    seed = (project_dir() / "seed.txt").read_text(encoding="utf-8")
+    world = (project_dir() / "world.md").read_text(encoding="utf-8")
+    characters = (project_dir() / "characters.md").read_text(encoding="utf-8")
+    mystery = read_project_file("MYSTERY.md")
+    craft = read_project_file("CRAFT.md")
+
+    # Voice Part 2 only（見出しは「Part 2」でも「第○部」でも拾う。無ければ全文を使う）
+    voice = read_project_file("voice.md")
+    voice_lines = voice.split('\n')
+    part2_start = next((i for i, l in enumerate(voice_lines)
+                        if l.lstrip().startswith('#')
+                        and ('Part 2' in l or '第2部' in l)), 0)
+    voice_part2 = '\n'.join(voice_lines[part2_start:])
+
+    prompt = f"""このファンタジー小説の章アウトラインの前半（第1章〜第{HALF}章）を構築してください。
 全体は{N_CHAPTERS}章、合計約{N_CHAPTERS*3000:,}〜{N_CHAPTERS*4000:,}語（1章あたり約3,000〜4,000語）の予定です。今回は第1章〜第{HALF}章だけを書いてください。
 
 SEED CONCEPT（種コンセプト）：
@@ -176,24 +183,27 @@ CRAFT REFERENCE（従うべき構造）：
 - 退屈の防止（必須）：(1) 全体の40〜60%地点に「取り返しのつかない損失」を1つ置く。以後の章で元に戻さない (2) 対立面（敵・障害）を第II幕の終わりまで持続させる。敵が不在の章を3章以上続けない (3) 各章の末尾に「次をめくる理由」（新しい疑問・差し迫る危険・約束）を1つ置く。静かな着地で終える章は全体で3章まで
 - 上記の幕の割り当て（40〜60%地点＝第II幕前編の後半）と、「取り返しのつかない損失」の位置が一致していること
 
-出力はすべて日本語で書いてください。第1章〜第12章まで、完全に書いてください。
+出力はすべて日本語で書いてください。第1章〜第{HALF}章まで、完全に書いてください。
 """
 
-print("Calling writer model...", file=sys.stderr)
-result = call_writer(prompt)
-# Retry on empty/short output
-attempt = 1
-while (len(result.strip()) < 500) and attempt < 4:
-    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    print("Calling writer model...", file=sys.stderr)
     result = call_writer(prompt)
-    attempt += 1
-# Write part 1 to outline.md and hand off to /tmp/outline_output.md for part 2
-outline_path = project_dir() / "outline.md"
-outline_path.write_text(result.strip() + "\n")
-# 2026-11-19 修正: /tmp の固定パスは共有領域で、他プロセスと衝突し、
-# 先回りされたシンボリックリンク経由で別の場所へ書かされる余地がある。
-# 作品ディレクトリ内の git 管理外（edit_logs/）へ置く。
-tmp_path = project_dir() / "edit_logs" / "outline_part1.md"
-tmp_path.parent.mkdir(parents=True, exist_ok=True)
-tmp_path.write_text(result.strip() + "\n", encoding="utf-8")
-print(result)
+    # Retry on empty/short output
+    attempt = 1
+    while (len(result.strip()) < 500) and attempt < 4:
+        print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+        result = call_writer(prompt)
+        attempt += 1
+    # 保存（既存は .bak に退避し、短すぎる出力では上書きしない）
+    safeio.safe_write(project_dir() / "outline.md", result)
+    # 2026-11-19 修正: /tmp の固定パスは共有領域で、他プロセスと衝突し、
+    # 先回りされたシンボリックリンク経由で別の場所へ書かされる余地がある。
+    # 作品ディレクトリ内の git 管理外（edit_logs/）へ置く。
+    tmp_path = project_dir() / "edit_logs" / "outline_part1.md"
+    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+    safeio.safe_write(tmp_path, result)
+    print(result)
+
+
+if __name__ == "__main__":
+    main()

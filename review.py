@@ -84,7 +84,7 @@ def build_manuscript():
     
     parts = []
     for ch in chapters:
-        parts.append(ch.read_text())
+        parts.append(ch.read_text(encoding="utf-8"))
     
     manuscript = "\n\n---\n\n".join(parts)
     wc = len(manuscript.split())
@@ -293,12 +293,12 @@ def cmd_review(args):
     parsed["title"] = title
     parsed["word_count"] = len(manuscript.split())
     
-    log_path.write_text(json.dumps(parsed, indent=2, default=str))
+    log_path.write_text(json.dumps(parsed, indent=2, default=str), encoding="utf-8")
     print(f"\nReview saved to {log_path}", file=sys.stderr)
     
     # Save human-readable copy
     if args.output:
-        Path(args.output).write_text(review_text)
+        Path(args.output).write_text(review_text, encoding="utf-8")
         print(f"Human-readable copy: {args.output}", file=sys.stderr)
     
     # Print summary
@@ -322,7 +322,7 @@ def cmd_parse(args):
         print("No reviews found. Run: review.py first")
         sys.exit(1)
     
-    latest = json.loads(reviews[0].read_text())
+    latest = json.loads(reviews[0].read_text(encoding="utf-8"))
     
     print(f"Latest review: {latest.get('timestamp', 'unknown')}")
     print(f"Stars: {latest.get('stars', '?')}")

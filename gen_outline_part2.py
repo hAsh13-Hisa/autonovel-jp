@@ -10,10 +10,27 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+import safeio
+
 BASE_DIR = Path(__file__).parent
 # 章数（2026-10-19: 24を直書きしていた。env `AUTONOVEL_CHAPTERS` から取る。既定24）
-N_CHAPTERS = int(os.environ.get("AUTONOVEL_CHAPTERS", "24"))
-HALF = N_CHAPTERS // 2
+# 2026-11-22 修正: 1章ものでは HALF=0 になり「第1章〜第0章」の矛盾プロンプトになっていた。
+# 前半で完結する章数ならこの工程は何もせず正常終了する（run_pipeline.py も呼ばない）。
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"[gen_outline_part2] {name}={raw!r} は整数ではない。{default} を使う", file=sys.stderr)
+        return default
+    if value < 1:
+        print(f"[gen_outline_part2] {name}={value} は1未満。1として扱う", file=sys.stderr)
+        return 1
+    return value
+
+
+N_CHAPTERS = _env_int("AUTONOVEL_CHAPTERS", 24)
+HALF = N_CHAPTERS if N_CHAPTERS < 2 else N_CHAPTERS // 2
 # .env はカレント（＝作り直し版のコピー先）を優先し、無ければリポジトリ側。
 # なぜ: 作り直しの作業はコピー先で行うので、エンドポイントの設定も
 # コピー先の .env を使うべき。リポジトリ側の .env は git 管理外で
@@ -71,23 +88,6 @@ def read_project_file(name: str) -> str:
         return alt.read_text(encoding="utf-8")
     raise FileNotFoundError(
         f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
-def read_project_file(name: str) -> str:
-    """作品ファイルを読む。カレントに無ければリポジトリ側から読む。
-
-    なぜ1ファイルずつフォールバックするか（実測 2026-10-14）: 作り直しの
-    コピー先には seed.txt / world.md / characters.md はあっても MYSTERY.md や
-    CRAFT.md が無いことがある。project_dir() をカレント一択にすると
-    FileNotFoundError で起動すらできない。
-    → 作品に固有のファイルはカレント、共有のガイド（MYSTERY/CRAFT/voice）は
-      リポジトリにも探しに行く。
-    """
-    here = Path.cwd() / name
-    if here.exists():
-        return here.read_text(encoding="utf-8")
-    alt = repo_dir() / name
-    if alt.exists():
-        return alt.read_text(encoding="utf-8")
-    raise FileNotFoundError(f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
 import llm
 
 # 幕構成のうち、part2 が担当する範囲（前半の gen_outline.py は第12章までしか書かないので、
@@ -163,9 +163,13 @@ def call_writer(prompt, max_tokens=16000):
 
 def main() -> None:
     """後半の章アウトラインと伏線台帳を作り、outline.md に追記する。"""
-    seed = (project_dir() / "seed.txt").read_text()
-    world = (project_dir() / "world.md").read_text()
-    characters = (project_dir() / "characters.md").read_text()
+    if N_CHAPTERS < 2:
+        print(f"[gen_outline_part2] {N_CHAPTERS}章の作品なので後半工程は不要。何もしない。",
+              file=sys.stderr)
+        return
+    seed = (project_dir() / "seed.txt").read_text(encoding="utf-8")
+    world = (project_dir() / "world.md").read_text(encoding="utf-8")
+    characters = (project_dir() / "characters.md").read_text(encoding="utf-8")
     mystery = read_project_file("MYSTERY.md")
 
     # Part 1 (chapters 1-12) from the handoff file
@@ -173,7 +177,7 @@ def main() -> None:
     if not part1_path.exists():
         print(f"ERROR: {part1_path} not found (run gen_outline.py first)", file=sys.stderr)
         sys.exit(1)
-    part1 = part1_path.read_text()
+    part1 = part1_path.read_text(encoding="utf-8")
 
     prompt = f"""このファンタジー小説の章アウトラインの後半（第{HALF+1}章〜第{N_CHAPTERS}章）と伏線台帳を構築してください。
 前半（第1章〜第{HALF}章）はすでにあります。同じ形式で続けてください。
@@ -255,7 +259,7 @@ CHARACTER REGISTRY（キャラクター登録簿）：
     combined = part1.strip() + "\n\n" + result.strip() + "\n"
     # 幕構成の後半（50〜100%）はモデルが書かないので、%位置 から補ってから保存する
     combined = complete_act_overview(combined)
-    outline_path.write_text(combined)
+    safeio.safe_write(outline_path, combined)
     print(result)
 
 

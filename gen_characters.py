@@ -66,24 +66,8 @@ def read_project_file(name: str) -> str:
         return alt.read_text(encoding="utf-8")
     raise FileNotFoundError(
         f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
-def read_project_file(name: str) -> str:
-    """作品ファイルを読む。カレントに無ければリポジトリ側から読む。
-
-    なぜ1ファイルずつフォールバックするか（実測 2026-10-14）: 作り直しの
-    コピー先には seed.txt / world.md / characters.md はあっても MYSTERY.md や
-    CRAFT.md が無いことがある。project_dir() をカレント一択にすると
-    FileNotFoundError で起動すらできない。
-    → 作品に固有のファイルはカレント、共有のガイド（MYSTERY/CRAFT/voice）は
-      リポジトリにも探しに行く。
-    """
-    here = Path.cwd() / name
-    if here.exists():
-        return here.read_text(encoding="utf-8")
-    alt = repo_dir() / name
-    if alt.exists():
-        return alt.read_text(encoding="utf-8")
-    raise FileNotFoundError(f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
 import llm
+import safeio  # 書き込みの安全策（.bak 退避・短すぎる出力は書かない）
 
 
 
@@ -98,18 +82,21 @@ def call_writer(prompt, max_tokens=16000):
     )
 
 
-seed = (project_dir() / "seed.txt").read_text()
-world = (project_dir() / "world.md").read_text()
 
-# Voice Part 2 only（見出しは「Part 2」でも「第○部」でも拾う。無ければ全文を使う）
-voice = read_project_file("voice.md")
-voice_lines = voice.split('\n')
-part2_start = next((i for i, l in enumerate(voice_lines)
-                    if l.lstrip().startswith('#')
-                    and ('Part 2' in l or '第2部' in l)), 0)
-voice_part2 = '\n'.join(voice_lines[part2_start:])
 
-prompt = f"""このファンタジー小説の完全なキャラクター登録簿を作り上げてください。これは CHARACTERS.MD ——
+def main() -> None:
+    seed = (project_dir() / "seed.txt").read_text(encoding="utf-8")
+    world = (project_dir() / "world.md").read_text(encoding="utf-8")
+
+    # Voice Part 2 only（見出しは「Part 2」でも「第○部」でも拾う。無ければ全文を使う）
+    voice = read_project_file("voice.md")
+    voice_lines = voice.split('\n')
+    part2_start = next((i for i, l in enumerate(voice_lines)
+                        if l.lstrip().startswith('#')
+                        and ('Part 2' in l or '第2部' in l)), 0)
+    voice_part2 = '\n'.join(voice_lines[part2_start:])
+
+    prompt = f"""このファンタジー小説の完全なキャラクター登録簿を作り上げてください。これは CHARACTERS.MD ——
 この物語に誰が存在し、何が彼らを駆り立て、どう話し、どんな秘密を抱えるかの決定的な参照元です。
 
 SEED CONCEPT（種コンセプト）：
@@ -198,15 +185,18 @@ CHARACTER CRAFT REQUIREMENTS（CRAFT.md から）：
 出力はすべて日本語で書いてください。
 """
 
-print("Calling writer model...", file=sys.stderr)
-result = call_writer(prompt)
-# Retry on empty/short output (intermittent empty responses from some models)
-attempt = 1
-while (len(result.strip()) < 500) and attempt < 4:
-    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    print("Calling writer model...", file=sys.stderr)
     result = call_writer(prompt)
-    attempt += 1
-# Write the character registry to characters.md
-characters_path = project_dir() / "characters.md"
-characters_path.write_text(result.strip() + "\n")
-print(result)
+    # Retry on empty/short output (intermittent empty responses from some models)
+    attempt = 1
+    while (len(result.strip()) < 500) and attempt < 4:
+        print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+        result = call_writer(prompt)
+        attempt += 1
+    # 保存（既存は .bak に退避し、短すぎる出力では上書きしない）
+    safeio.safe_write(project_dir() / "characters.md", result)
+    print(result)
+
+
+if __name__ == "__main__":
+    main()

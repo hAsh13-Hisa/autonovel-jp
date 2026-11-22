@@ -48,29 +48,31 @@ def main():
     
     title = novel_title()
     heading = f"「{title}」第{ch_num}章" if title else f"第{ch_num}章"
-    voice = (BASE_DIR / "voice.md").read_text()
-    characters = (BASE_DIR / "characters.md").read_text()
-    world = (BASE_DIR / "world.md").read_text()
-    brief = Path(brief_file).read_text()
+    voice = (BASE_DIR / "voice.md").read_text(encoding="utf-8")
+    characters = (BASE_DIR / "characters.md").read_text(encoding="utf-8")
+    world = (BASE_DIR / "world.md").read_text(encoding="utf-8")
+    brief = Path(brief_file).read_text(encoding="utf-8")
     
     # Prune context to only what this revision needs (prevents 40KB+ prompt
     # that triggers empty responses on long-prose models). Reuse the beat
     # script's pruning helpers.
     import draft_chapter_beat as dcb
-    keywords = dcb.extract_keywords(brief, brief)
+    # 2026-11-22 修正: 第2引数はキャラ名のリスト（以前は brief を渡していて
+    # 全文字がキーワードになり、文脈の枝刈りが無効だった）。
+    keywords = dcb.extract_keywords(brief, dcb.extract_character_names(characters))
     pruned_characters = dcb.extract_character_sections(characters, keywords)
     pruned_world = dcb.extract_doc_sections(world, keywords)
-    pruned_canon = dcb.extract_doc_sections((BASE_DIR / "canon.md").read_text(), keywords)
+    pruned_canon = dcb.extract_doc_sections((BASE_DIR / "canon.md").read_text(encoding="utf-8"), keywords)
     
     # Load adjacent chapters for continuity
     prev_path = BASE_DIR / "chapters" / f"ch_{ch_num - 1:02d}.md"
     next_path = BASE_DIR / "chapters" / f"ch_{ch_num + 1:02d}.md"
-    prev_tail = prev_path.read_text()[-2000:] if prev_path.exists() else "(first chapter)"
-    next_head = next_path.read_text()[:1500] if next_path.exists() else "(last chapter)"
+    prev_tail = prev_path.read_text(encoding="utf-8")[-2000:] if prev_path.exists() else "(first chapter)"
+    next_head = next_path.read_text(encoding="utf-8")[:1500] if next_path.exists() else "(last chapter)"
     
     # Load old version if exists
     old_path = BASE_DIR / "chapters" / f"ch_{ch_num:02d}.md"
-    old_text = old_path.read_text() if old_path.exists() and old_path.stat().st_size > 0 else "(no existing draft)"
+    old_text = old_path.read_text(encoding="utf-8") if old_path.exists() and old_path.stat().st_size > 0 else "(no existing draft)"
     
     prompt = f"""{heading}を書き直してください。
 
@@ -116,7 +118,7 @@ ANTI-PATTERN RULES（反パターン規則）：
     result = call_revision(prompt)
     
     out_path = BASE_DIR / "chapters" / f"ch_{ch_num:02d}.md"
-    out_path.write_text(result)
+    out_path.write_text(result, encoding="utf-8")
     print(f"Saved to {out_path}", file=sys.stderr)
     print(f"Word count: {len(result.split())}", file=sys.stderr)
 

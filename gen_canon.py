@@ -65,24 +65,8 @@ def read_project_file(name: str) -> str:
         return alt.read_text(encoding="utf-8")
     raise FileNotFoundError(
         f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
-def read_project_file(name: str) -> str:
-    """作品ファイルを読む。カレントに無ければリポジトリ側から読む。
-
-    なぜ1ファイルずつフォールバックするか（実測 2026-10-14）: 作り直しの
-    コピー先には seed.txt / world.md / characters.md はあっても MYSTERY.md や
-    CRAFT.md が無いことがある。project_dir() をカレント一択にすると
-    FileNotFoundError で起動すらできない。
-    → 作品に固有のファイルはカレント、共有のガイド（MYSTERY/CRAFT/voice）は
-      リポジトリにも探しに行く。
-    """
-    here = Path.cwd() / name
-    if here.exists():
-        return here.read_text(encoding="utf-8")
-    alt = repo_dir() / name
-    if alt.exists():
-        return alt.read_text(encoding="utf-8")
-    raise FileNotFoundError(f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
 import llm
+import safeio  # 書き込みの安全策（.bak 退避・短すぎる出力は書かない）
 
 
 
@@ -97,11 +81,14 @@ def call_writer(prompt, max_tokens=16000):
     )
 
 
-world = (project_dir() / "world.md").read_text()
-characters = (project_dir() / "characters.md").read_text()
-seed = (project_dir() / "seed.txt").read_text()
 
-prompt = f"""これらの計画文書から、EVERY hard fact（すべての確定事実）を構造化された正典データベースに抽出してください。
+
+def main() -> None:
+    world = (project_dir() / "world.md").read_text(encoding="utf-8")
+    characters = (project_dir() / "characters.md").read_text(encoding="utf-8")
+    seed = (project_dir() / "seed.txt").read_text(encoding="utf-8")
+
+    prompt = f"""これらの計画文書から、EVERY hard fact（すべての確定事実）を構造化された正典データベースに抽出してください。
 「hard fact（確定事実）」とは、書き手が矛盾させてはならないもの：名前、年齢、日付、身体的特徴、
 魔法システムのルール、地理、関係性、確定した出来事。
 
@@ -152,15 +139,18 @@ RULES（ルール）：
 出力はすべて日本語で書いてください。
 """
 
-print("Calling writer model...", file=sys.stderr)
-result = call_writer(prompt)
-# Retry on empty/short output (intermittent empty responses from some models)
-attempt = 1
-while (len(result.strip()) < 500) and attempt < 4:
-    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    print("Calling writer model...", file=sys.stderr)
     result = call_writer(prompt)
-    attempt += 1
-# Write the canon database to canon.md
-canon_path = project_dir() / "canon.md"
-canon_path.write_text(result.strip() + "\n")
-print(result)
+    # Retry on empty/short output (intermittent empty responses from some models)
+    attempt = 1
+    while (len(result.strip()) < 500) and attempt < 4:
+        print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+        result = call_writer(prompt)
+        attempt += 1
+    # 保存（既存は .bak に退避し、短すぎる出力では上書きしない）
+    safeio.safe_write(project_dir() / "canon.md", result)
+    print(result)
+
+
+if __name__ == "__main__":
+    main()

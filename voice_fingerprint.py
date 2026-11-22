@@ -69,23 +69,6 @@ def read_project_file(name: str) -> str:
         return alt.read_text(encoding="utf-8")
     raise FileNotFoundError(
         f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
-def read_project_file(name: str) -> str:
-    """作品ファイルを読む。カレントに無ければリポジトリ側から読む。
-
-    なぜ1ファイルずつフォールバックするか（実測 2026-10-14）: 作り直しの
-    コピー先には seed.txt / world.md / characters.md はあっても MYSTERY.md や
-    CRAFT.md が無いことがある。project_dir() をカレント一択にすると
-    FileNotFoundError で起動すらできない。
-    → 作品に固有のファイルはカレント、共有のガイド（MYSTERY/CRAFT/voice）は
-      リポジトリにも探しに行く。
-    """
-    here = Path.cwd() / name
-    if here.exists():
-        return here.read_text(encoding="utf-8")
-    alt = repo_dir() / name
-    if alt.exists():
-        return alt.read_text(encoding="utf-8")
-    raise FileNotFoundError(f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
 # The three vocabulary wells from voice.md
 WELL_MUSICAL = {
     "pitch", "tone", "interval", "chord", "note", "key", "octave", "fifth",
@@ -130,7 +113,7 @@ ABSTRACT_INDICATORS = {
 }
 
 def analyze_chapter(path):
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     words = text.split()
     word_count = len(words)
     lower_words = [w.lower().strip(".,;:!?\"'()—-–") for w in words]
@@ -271,7 +254,7 @@ def main():
     
     # Save full results
     out_path = BASE_DIR / "edit_logs" / "voice_fingerprint.json"
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump({"chapters": results, "outliers": outliers}, f, indent=2)
     print(f"\nSaved to {out_path}")
 

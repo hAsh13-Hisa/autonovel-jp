@@ -66,24 +66,8 @@ def read_project_file(name: str) -> str:
         return alt.read_text(encoding="utf-8")
     raise FileNotFoundError(
         f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
-def read_project_file(name: str) -> str:
-    """作品ファイルを読む。カレントに無ければリポジトリ側から読む。
-
-    なぜ1ファイルずつフォールバックするか（実測 2026-10-14）: 作り直しの
-    コピー先には seed.txt / world.md / characters.md はあっても MYSTERY.md や
-    CRAFT.md が無いことがある。project_dir() をカレント一択にすると
-    FileNotFoundError で起動すらできない。
-    → 作品に固有のファイルはカレント、共有のガイド（MYSTERY/CRAFT/voice）は
-      リポジトリにも探しに行く。
-    """
-    here = Path.cwd() / name
-    if here.exists():
-        return here.read_text(encoding="utf-8")
-    alt = repo_dir() / name
-    if alt.exists():
-        return alt.read_text(encoding="utf-8")
-    raise FileNotFoundError(f"{name} が見つかりません（{Path.cwd()} にも {repo_dir()} にも無い）")
 import llm
+import safeio  # 書き込みの安全策（.bak 退避・短すぎる出力は書かない）
 
 def call_writer(prompt, max_tokens=16000):
     return llm.call_writer(
@@ -99,16 +83,19 @@ def call_writer(prompt, max_tokens=16000):
         temperature=0.7,
     )
 
-seed = (project_dir() / "seed.txt").read_text()
-voice = read_project_file("voice.md")
-craft = read_project_file("CRAFT.md")
 
-# Extract voice Part 2 only (the novel-specific voice)
-voice_lines = voice.split('\n')
-part2_start = next(i for i, l in enumerate(voice_lines) if 'Part 2' in l)
-voice_part2 = '\n'.join(voice_lines[part2_start:])
 
-prompt = f"""このファンタジー小説の完全な世界バイブルを作り上げてください。これは WORLD.MD ファイルです——この世界に存在するすべてのものの決定的な参照元。書き手はこの文書だけでどんな世界構築上の疑問も解決できるべきです。
+def main() -> None:
+    seed = (project_dir() / "seed.txt").read_text(encoding="utf-8")
+    voice = read_project_file("voice.md")
+    craft = read_project_file("CRAFT.md")
+
+    # Extract voice Part 2 only (the novel-specific voice)
+    voice_lines = voice.split('\n')
+    part2_start = next(i for i, l in enumerate(voice_lines) if 'Part 2' in l)
+    voice_part2 = '\n'.join(voice_lines[part2_start:])
+
+    prompt = f"""このファンタジー小説の完全な世界バイブルを作り上げてください。これは WORLD.MD ファイルです——この世界に存在するすべてのものの決定的な参照元。書き手はこの文書だけでどんな世界構築上の疑問も解決できるべきです。
 
 SEED CONCEPT（種コンセプト）：
 {seed}
@@ -168,15 +155,18 @@ CRAFT REQUIREMENTS（CRAFT.md から。これに従うこと）：
 出力はすべて日本語で書いてください。
 """
 
-print("Calling writer model...", file=sys.stderr)
-result = call_writer(prompt)
-# Retry on empty/short output (intermittent empty responses from some models)
-attempt = 1
-while (len(result.strip()) < 500) and attempt < 4:
-    print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+    print("Calling writer model...", file=sys.stderr)
     result = call_writer(prompt)
-    attempt += 1
-# Write the world bible to world.md
-world_path = project_dir() / "world.md"
-world_path.write_text(result.strip() + "\n")
-print(result)
+    # Retry on empty/short output (intermittent empty responses from some models)
+    attempt = 1
+    while (len(result.strip()) < 500) and attempt < 4:
+        print(f"Empty/short output ({len(result.strip())} chars), retrying ({attempt}/3)...", file=sys.stderr)
+        result = call_writer(prompt)
+        attempt += 1
+    # 保存（既存は .bak に退避し、短すぎる出力では上書きしない）
+    safeio.safe_write(project_dir() / "world.md", result)
+    print(result)
+
+
+if __name__ == "__main__":
+    main()
