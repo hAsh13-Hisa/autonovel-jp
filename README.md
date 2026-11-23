@@ -495,6 +495,10 @@ See the upstream repository and its `autonovel/bells` branch.
 
 ---
 
+## 変更履歴
+
+修正・改善の履歴は [CHANGELOG.md](CHANGELOG.md) にあります（現在のバージョンは 0.2.0）。
+
 ## Inspiration
 
 - [karpathy/autoresearch](https://github.com/karpathy/autoresearch) — the autonomous research loop
