@@ -44,6 +44,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import shellcmd
+
 BASE_DIR = Path(__file__).parent
 CHAPTERS_DIR = BASE_DIR / "chapters"
 BRIEFS_DIR = BASE_DIR / "briefs"
@@ -449,10 +451,10 @@ def _pyexe() -> str:
     return "python3"
 
 
-def run(cmd: str, timeout: int = 600) -> subprocess.CompletedProcess:
+def run(cmd, timeout: int = 600) -> subprocess.CompletedProcess:
+    """shell を介さずに実行する（2026-11-23: `shell=True` の廃止）。"""
     print(f"  RUN: {cmd}", flush=True)
-    return subprocess.run(cmd, shell=True, cwd=BASE_DIR, capture_output=True,
-                          text=True, timeout=timeout)
+    return shellcmd.run(cmd, cwd=BASE_DIR, timeout=timeout)
 
 
 def write_new_outline(plan: dict, old_entries: dict) -> Path:

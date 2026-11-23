@@ -5,8 +5,12 @@ import sys
 import re
 import json
 
+import shellcmd
+
+
 def run(cmd, timeout=600):
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+    """shell を介さずに実行する（2026-11-23: `shell=True` の廃止）。"""
+    r = shellcmd.run(cmd, timeout=timeout)
     return r.stdout + r.stderr, r.returncode
 
 def slop_check(ch):
@@ -18,8 +22,8 @@ def pattern_check(ch):
     didnot = int(out.strip()) if out.strip().isdigit() else 0
     out, _ = run(f"grep -c 'He thought about\\|He thought of' chapters/ch_{ch:02d}.md")
     thought = int(out.strip()) if out.strip().isdigit() else 0
-    out, _ = run(f"wc -w < chapters/ch_{ch:02d}.md")
-    words = int(out.strip())
+    with open(f"chapters/ch_{ch:02d}.md", encoding="utf-8") as fh:
+        words = len(fh.read().split())
     return words, didnot, thought
 
 def spot_eval(ch):

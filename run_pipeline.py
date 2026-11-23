@@ -25,6 +25,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import shellcmd
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -244,18 +246,17 @@ def step(text: str):
 # Helpers: subprocess execution
 # ---------------------------------------------------------------------------
 
-def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
-    """
-    Run a tool as a subprocess, capturing output.
-    Uses shell=True so callers can pass full command strings.
+def run_tool(cmd, timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
+    """Run a tool as a subprocess, capturing output.
+
+    2026-11-23: `shell=True` をやめた（11/19 レビューの「高」指摘）。文字列でも
+    引数リストでも受け取れるが、シェル機能（パイプ・リダイレクト・連結）を含む
+    文字列は実行せずに ValueError で止める（`shellcmd.py` を参照）。
     Returns CompletedProcess; never raises unless check=True.
     """
     step(f"RUN: {cmd}")
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True,
-            timeout=timeout, cwd=str(BASE_DIR),
-        )
+        result = shellcmd.run(cmd, timeout=timeout, cwd=str(BASE_DIR))
         if result.returncode != 0:
             print(f"    WARN: exit code {result.returncode}")
             stderr_preview = (result.stderr or "")[:300]
@@ -270,6 +271,19 @@ def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.Co
         # Return a fake CompletedProcess for graceful handling
         fake = subprocess.CompletedProcess(cmd, returncode=-1, stdout="", stderr="TIMEOUT")
         return fake
+
+
+def git_show_to(dest: Path, repo_path: str) -> bool:
+    """`git show HEAD:<path>` の出力をファイルに書く（シェルのリダイレクトを使わない）。
+
+    2026-11-23: `run_tool("git show ... > file")` は `shell=True` 前提だった。
+    失敗時は False を返し、呼び出し側は「旧版が取れなかった」として扱う。
+    """
+    res = run_tool(["git", "show", f"HEAD:{repo_path}"])
+    if res.returncode != 0 or not res.stdout:
+        return False
+    dest.write_text(res.stdout, encoding="utf-8")
+    return True
 
 
 def pyexe() -> str:
@@ -803,11 +817,11 @@ def discard_chapter_file(ch: int) -> None:
     `AUTONOVEL_REUSE_DRAFT=1` が「捨てたはずの原稿」を拾い、同じ章を評価し続ける。
     """
     rel = f"chapters/ch_{ch:02d}.md"
-    run_tool(f"git checkout -- {rel} 2>/dev/null || true")
+    run_tool(["git", "checkout", "--", rel])
     if (BASE_DIR / rel).exists():
-        tracked = run_tool(f"git ls-files --error-unmatch {rel} 2>/dev/null").returncode == 0
+        tracked = run_tool(["git", "ls-files", "--error-unmatch", rel]).returncode == 0
         if not tracked:
-            run_tool(f"rm -f {rel}")
+            run_tool(["rm", "-f", rel])
 
 
 def run_drafting(state: dict) -> dict:
@@ -1342,7 +1356,7 @@ def pairwise_verdict(ch_num: int, gate_path: str, cycle: int) -> tuple:
     """
     tmp_old = EDIT_LOGS_DIR / f"ch{ch_num:02d}_cycle{cycle}_head.md"
     verdict_file = EDIT_LOGS_DIR / f"ch{ch_num:02d}_cycle{cycle}_verdict.txt"
-    run_tool(f"git show HEAD:{gate_path} > {tmp_old}")
+    git_show_to(tmp_old, gate_path)
     if not tmp_old.exists() or not tmp_old.read_text(encoding="utf-8").strip():
         return "keep", "旧版を取り出せなかった（点が下がったので不採用）"
     uv_run(f"compare_versions.py --a {tmp_old} --b {gate_path} --chapter {ch_num} "
@@ -1583,7 +1597,7 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                     # 実測: 12B の改訂は重複35→5・同じ行44→10・……39→19と改善するが、閾値0には
                     # 届かないため全滅していた。合格だけを条件にすると改訂フェーズが空回りする。
                     prev_copy = CHAPTERS_DIR / f"ch_{ch_num:02d}_prev.md"
-                    run_tool(f"git show HEAD:{gate_path} > {prev_copy}")
+                    git_show_to(prev_copy, gate_path)
                     old_metrics: dict = {}
                     new_metrics: dict = {}
                     if prev_copy.exists():
