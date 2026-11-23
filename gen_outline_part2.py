@@ -179,6 +179,29 @@ def main() -> None:
         sys.exit(1)
     part1 = part1_path.read_text(encoding="utf-8")
 
+    # 幕の章範囲は章数から計算する（2026-11-23 通し実行で判明）。
+    # 以前は「第13〜18章あたり」「第19〜24章あたり」を直書きしていたため、
+    # AUTONOVEL_CHAPTERS=2 でもモデルが20章ぶん書き、outline が要求と食い違った。
+    if N_CHAPTERS >= 6:
+        a2s = HALF + 1
+        a2e = max(a2s, round(N_CHAPTERS * 0.75))
+        a3s = min(a2e + 1, N_CHAPTERS)
+        act_block = (
+            f"第2幕后編（第{a2s}〜{a2e}章あたり）：圧力が高まる。敵対勢力が主人公に対抗する。\n"
+            "導き手の秘密が表面化し始める。主人公の嘘はますます維持できなくなる。\n"
+            "全てを失う：主人公は真実と対峙し、完全な真実を学ぶ。\n\n"
+            f"第3幕（第{a3s}〜{N_CHAPTERS}章あたり）：主人公は問いを理解する。どう答えるかを選ばなければならない。\n"
+            "クライマックスは確立された魔法体系のルールを使って展開する。\n"
+            "結末は彼女／彼の選択の結果を示す。"
+        )
+        thread_min = min(15, max(3, N_CHAPTERS))
+    else:
+        act_block = (
+            f"全{N_CHAPTERS}章の短い作品。上の「主要プロット構造」は章数に合わせて圧縮すること"
+            "（幕を3つに割らず、ピンチ→小さな克服→引きの1サイクルで締める）。"
+        )
+        thread_min = 2
+
     prompt = f"""このファンタジー小説の章アウトラインの後半（第{HALF+1}章〜第{N_CHAPTERS}章）と伏線台帳を構築してください。
 前半（第1章〜第{HALF}章）はすでにあります。同じ形式で続けてください。
 
@@ -218,13 +241,7 @@ CHARACTER REGISTRY（キャラクター登録簿）：
 
 主要プロット構造（SEED に「ストーリー構成」「各幕の事件」の記述があればそれに従うこと。無ければ以下に従うこと）：
 
-第2幕后編（第13〜18章あたり）：圧力が高まる。敵対勢力が主人公に対抗する。
-導き手の秘密が表面化し始める。主人公の嘘はますます維持できなくなる。
-全てを失う：主人公は真実と対峙し、完全な真実を学ぶ。
-
-第3幕（第19〜24章あたり）：主人公は問いを理解する。どう答えるかを選ばなければならない。
-クライマックスは確立された魔法体系のルールを使って展開する。
-結末は彼女／彼の選択の結果を示す。
+{act_block}
 
 制約：
 - クライマックスは確立された魔法体系のルールで機械的に解決可能でなければならない
@@ -241,7 +258,7 @@ CHARACTER REGISTRY（キャラクター登録簿）：
 植えられたすべての糸を追跡する表：
 | 糸 | 植え込み（章） | 強化（章） | 回収（章） | 種類 |
 
-少なくとも15本の糸を含める。種類：物体、台詞、行動、象徴的、構造的。
+少なくとも{thread_min}本の糸を含める。種類：物体、台詞、行動、象徴的、構造的。
 植え込みから回収までの距離は少なくとも3章あること。
 
 出力はすべて日本語で書いてください。第{HALF+1}章〜第{N_CHAPTERS}章と伏線台帳まで、完全に書いてください。
@@ -255,12 +272,38 @@ CHARACTER REGISTRY（キャラクター登録簿）：
         result = call_writer(prompt)
         attempt += 1
     # Append part 2 to outline.md
+    result = clamp_chapters(result, N_CHAPTERS)
     outline_path = project_dir() / "outline.md"
     combined = part1.strip() + "\n\n" + result.strip() + "\n"
     # 幕構成の後半（50〜100%）はモデルが書かないので、%位置 から補ってから保存する
     combined = complete_act_overview(combined)
     safeio.safe_write(outline_path, combined)
     print(result)
+
+
+def clamp_chapters(text: str, limit: int) -> str:
+    """要求章数を超える章を落とす（モデルが範囲を守らないときの歯止め）。
+
+    なぜ必要か（2026-11-23 通し実行で実測）: AUTONOVEL_CHAPTERS=2 と指示しても
+    モデルが20章ぶん書き、outline.md が要求（2章）と食い違った。outline が膨らむと
+    後続の判定プロンプトも膨らみ、ローカルモデルのコンテキスト超過で走行が止まる。
+    """
+    pat = re.compile(r'^#{2,3}\s*第(\d+)章')
+    out, dropped, skipping = [], [], False
+    for ln in text.splitlines(keepends=True):
+        if ln.lstrip().startswith("#"):
+            m = pat.match(ln)
+            if m and int(m.group(1)) > limit:
+                skipping = True
+                dropped.append(int(m.group(1)))
+                continue
+            skipping = False
+        if not skipping:
+            out.append(ln)
+    if dropped:
+        print(f"[gen_outline_part2] 要求 {limit} 章を超える章を落とした: "
+              f"{sorted(set(dropped))}", file=sys.stderr)
+    return "".join(out)
 
 
 if __name__ == "__main__":

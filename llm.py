@@ -150,6 +150,15 @@ def _post(url: str, headers: dict, payload: dict):
     for attempt in range(1, LLM_RETRIES + 1):
         try:
             resp = httpx.post(url, headers=headers, json=payload, timeout=900)
+            # コンテキスト超過は「一時的な失敗」ではない。待って再試行しても永久に直らないので、
+            # 待ち時間（実測: 4回で約225秒）を捨てずに、直し方つきで即座に止める。
+            # 2026-11-23 の通し実行で、ローカル判定（入力39,559字）がこれで4回空振りした。
+            if resp.status_code == 400 and "context length" in (resp.text or ""):
+                raise RuntimeError(
+                    "[llm] 入力がモデルのコンテキスト長を超えた（HTTP 400）。"
+                    "ローカルモデルなら AUTONOVEL_NUM_CTX=32768 のように上限を上げるか、"
+                    "入力を短くしてください。再試行しても直りません。\n"
+                    f"  url={url}\n  応答={resp.text[:300]}")
             if resp.status_code in RETRY_STATUS:
                 last_status = resp.status_code
                 raise _Transient(f"HTTP {resp.status_code}",
