@@ -1272,6 +1272,66 @@ def revision_gate_check(changed: list) -> int:
     return reverted
 
 
+def parse_gate_metrics(stdout: str) -> dict:
+    """章ゲートの出力から数値だけを拾う（改訂の採否を「改善したか」で見るため）。
+
+    2026-11-23 追加。改訂が全滅した実測（重複35→5・同じ行44→10・……39→19・比喩6.1→5.7と
+    改善しているのに、絶対閾値に届かないので毎回元に戻されていた）を受けて、
+    「合格したか」ではなく「悪化していないか・良くなったか」を比べられるようにする。
+    """
+    m: dict = {}
+    for line in (stdout or "").splitlines():
+        if "文字数" in line:
+            r = re.search(r"文字数:\s*(\d+)", line)
+            if r:
+                m["chars"] = int(r.group(1))
+        elif "重複(12字以上x2)" in line:
+            r = re.search(r":\s*(\d+)", line)
+            if r:
+                m["dup"] = int(r.group(1))
+        elif "……/——/英語" in line:
+            r = re.search(r":\s*(\d+)/(\d+)/(\d+)", line)
+            if r:
+                m["dots"], m["dash"], m["eng"] = int(r.group(1)), int(r.group(2)), int(r.group(3))
+        elif "同じ行が2回以上" in line:
+            r = re.search(r":\s*(\d+)", line)
+            if r:
+                m["dup_line"] = int(r.group(1))
+        elif "比喩密度" in line:
+            r = re.search(r"比喩密度:\s*([\d.]+)/1000字", line)
+            if r:
+                m["metaphor"] = float(r.group(1))
+    return m
+
+
+# 改訂で「採用してよい」とみなす字数の下限（元の何割以上か）。
+# 2026-11-23 実測: 12B の改訂は 9,581字 → 5,054字（47%減）まで縮んだ。改善していても
+# 半分になっていいわけではないので、下限を置いて足切りする。
+REVISION_MIN_KEEP_RATIO = float(os.environ.get("AUTONOVEL_REVISION_MIN_KEEP_RATIO", "0.8"))
+
+
+def improvement_verdict(old: dict, new: dict) -> tuple:
+    """絶対合格でなくても「悪化なし＆1項目以上改善＆字数8割以上」なら採用する。
+
+    2026-11-23 Hisa判断: 改訂の採否を「絶対合格」から「改善」に変える。
+    返り値: (採用するか, 理由)
+    """
+    if not old or not new:
+        return False, "旧版か改訂版の計測ができなかった"
+    old_chars = old.get("chars", 0)
+    if old_chars and new.get("chars", 0) < old_chars * REVISION_MIN_KEEP_RATIO:
+        return False, (f"字数が{new.get('chars')}字（元{old_chars}字の"
+                       f"{REVISION_MIN_KEEP_RATIO:.0%}未満）")
+    keys = [k for k in ("dup", "dup_line", "dots", "metaphor") if k in old and k in new]
+    worse = [k for k in keys if new[k] > old[k]]
+    better = [k for k in keys if new[k] < old[k]]
+    if worse:
+        return False, "悪化: " + ", ".join(f"{k} {old[k]}→{new[k]}" for k in worse)
+    if not better:
+        return False, "改善なし（全項目が同じ）"
+    return True, "改善: " + ", ".join(f"{k} {old[k]}→{new[k]}" for k in better)
+
+
 def pairwise_verdict(ch_num: int, gate_path: str, cycle: int) -> tuple:
     """点が下がった改訂を、一対比較（Elo）で救うかどうかを決める。
 
@@ -1519,11 +1579,31 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
                         else:
                             run_tool(f"rm -f chapters/ch_{ch_num:02d}_repaired.md")
                 if not healed:
-                    step("  修復しても通らないので、この改訂は元に戻します")
-                    run_tool(f"git checkout -- {gate_path}")
-                    log_result("reverted", f"rev-ch{ch_num:02d}", -1, 0, "discard",
-                               f"Cycle {cycle}: {question} 改訂版が章ゲートFAIL（元に戻した）")
-                    continue
+                    # 絶対合格でなくても「悪化せず改善している」改訂は採用する（2026-11-23 Hisa判断）。
+                    # 実測: 12B の改訂は重複35→5・同じ行44→10・……39→19と改善するが、閾値0には
+                    # 届かないため全滅していた。合格だけを条件にすると改訂フェーズが空回りする。
+                    prev_copy = CHAPTERS_DIR / f"ch_{ch_num:02d}_prev.md"
+                    run_tool(f"git show HEAD:{gate_path} > {prev_copy}")
+                    old_metrics: dict = {}
+                    new_metrics: dict = {}
+                    if prev_copy.exists():
+                        old_metrics = parse_gate_metrics(
+                            run_tool(revision_gate_cmd_for(f"chapters/ch_{ch_num:02d}_prev.md"),
+                                     timeout=300).stdout)
+                        new_metrics = parse_gate_metrics(
+                            run_tool(revision_gate_cmd_for(gate_path), timeout=300).stdout)
+                    run_tool(f"rm -f {prev_copy}")
+                    adopt, why = improvement_verdict(old_metrics, new_metrics)
+                    if adopt:
+                        step(f"  絶対合格ではないが改善しているので採用します（{why}）")
+                        log_result("adopted", f"rev-ch{ch_num:02d}", "", 0, "keep",
+                                   f"Cycle {cycle}: {why}")
+                    else:
+                        step(f"  修復しても通らないので、この改訂は元に戻します（{why}）")
+                        run_tool(f"git checkout -- {gate_path}")
+                        log_result("reverted", f"rev-ch{ch_num:02d}", -1, 0, "discard",
+                                   f"Cycle {cycle}: {question} 改訂版が章ゲートFAIL（元に戻した・{why}）")
+                        continue
 
             # Evaluate revised chapter
             post_eval = uv_run(f"evaluate.py --chapter={ch_num}", timeout=300)
