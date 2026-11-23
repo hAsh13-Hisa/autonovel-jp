@@ -1272,7 +1272,7 @@ def revision_gate_check(changed: list) -> int:
     return reverted
 
 
-def parse_gate_metrics(stdout: str) -> dict:
+def parse_gate_metrics(stdout: str | None) -> dict:
     """章ゲートの出力から数値だけを拾う（改訂の採否を「改善したか」で見るため）。
 
     2026-11-23 追加。改訂が全滅した実測（重複35→5・同じ行44→10・……39→19・比喩6.1→5.7と
